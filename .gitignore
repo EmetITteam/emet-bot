@@ -1,0 +1,31 @@
+# Секреты и конфиги
+.env
+credentials.json
+
+# База данных
+data/bot_usage.db
+data/*.db
+
+# ChromaDB индексы (пересоздаются при индексации)
+data/db_index_*/
+
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+venv/
+.venv/
+*.egg-info/
+
+# Артефакты
+*.xlsx
+*.html
+*.pdf
+
+# IDE
+.idea/
+.vscode/
+*.swp
+
+# Claude
+.claude/
