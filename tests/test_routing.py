@@ -1,3 +1,6 @@
+import sys, io
+sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
+
 """
 Routing Unit Tests — перевірка логіки визначення режиму бота.
 
@@ -98,8 +101,8 @@ def run_group(label, cases, fn, expected):
             failed += 1
             got = "MATCH" if result else "NO MATCH"
             exp = "MATCH" if expected else "NO MATCH"
-            failures.append(f"    [X]  \"{text}\"\n       ({desc})\n       expected {exp}, got {got}")
-    status = "[OK]  " if failed == 0 else "[FAIL]"
+            failures.append(f"    ❌  «{text}»\n       ({desc})\n       очікувалось {exp}, отримано {got}")
+    status = "✅" if failed == 0 else "❌"
     print(f"  {status} {label}: {passed}/{passed+failed}")
     for f in failures:
         print(f)
@@ -114,23 +117,23 @@ def run():
     total_failed = 0
 
     print("[ COMBO KEYWORDS ]")
-    total_failed += run_group("should match    ", COMBO_SHOULD_MATCH,     is_combo, True)
-    total_failed += run_group("should NOT match", COMBO_SHOULD_NOT_MATCH, is_combo, False)
+    total_failed += run_group("Мають спрацювати   ", COMBO_SHOULD_MATCH,     is_combo, True)
+    total_failed += run_group("НЕ мають спрацювати", COMBO_SHOULD_NOT_MATCH, is_combo, False)
 
     print("\n[ SCRIPT KEYWORDS ]")
-    total_failed += run_group("should match    ", SCRIPT_SHOULD_MATCH,    is_script, True)
-    total_failed += run_group("should NOT match", SCRIPT_SHOULD_NOT_MATCH, is_script, False)
+    total_failed += run_group("Мають спрацювати   ", SCRIPT_SHOULD_MATCH,    is_script, True)
+    total_failed += run_group("НЕ мають спрацювати", SCRIPT_SHOULD_NOT_MATCH, is_script, False)
 
     total = (len(COMBO_SHOULD_MATCH) + len(COMBO_SHOULD_NOT_MATCH) +
              len(SCRIPT_SHOULD_MATCH) + len(SCRIPT_SHOULD_NOT_MATCH))
     passed = total - total_failed
 
     print(f"\n{'='*60}")
-    print(f"Result: {passed}/{total} tests passed")
+    print(f"Результат: {passed}/{total} тестів пройшло")
     if total_failed == 0:
-        print("ALL TESTS PASSED")
+        print("✅ ВСІ ТЕСТИ ПРОЙШЛИ")
     else:
-        print(f"FAILED: {total_failed} тестів не пройшло — перевір keywords в main.py")
+        print(f"❌ {total_failed} тестів не пройшло — перевір keywords в main.py")
     print(f"{'='*60}\n")
 
     sys.exit(0 if total_failed == 0 else 1)

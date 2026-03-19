@@ -1,3 +1,6 @@
+import sys, io
+sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
+
 """
 RAG Smoke Test — перевірка якості пошуку після пересборки індексу.
 
