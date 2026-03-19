@@ -218,7 +218,9 @@ def _build_to_path(documents, db_path):
     from langchain_chroma import Chroma
     from langchain_text_splitters import RecursiveCharacterTextSplitter
     embeddings = OpenAIEmbeddings(openai_api_key=OPENAI_KEY, model="text-embedding-3-small")
-    text_splitter = RecursiveCharacterTextSplitter(chunk_size=1500, chunk_overlap=200)
+    # chunk_size=800 для KB (краще знаходить конкретні розділи), 1500 для коуча (потрібен ширший контекст)
+    chunk_size = 800 if "kb" in db_path else 1500
+    text_splitter = RecursiveCharacterTextSplitter(chunk_size=chunk_size, chunk_overlap=150)
     texts = text_splitter.split_documents(documents)
     print(f"   Фрагментов: {len(texts)}")
     vector_db = None
