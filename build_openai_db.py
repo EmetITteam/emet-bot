@@ -136,9 +136,12 @@ def download_and_parse_files(service, drive_files):
 
             # Создаем документ для базы
             if text:
+                name_lower = file['name'].lower()
+                category = "combo" if any(w in name_lower for w in ["протокол", "комбін", "combo"]) else "general"
                 metadata = {
                     "source": file['name'],
-                    "url": file.get('webViewLink', '') 
+                    "url": file.get('webViewLink', ''),
+                    "category": category
                 }
                 all_documents.append(Document(page_content=text, metadata=metadata))
         except Exception as e:

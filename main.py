@@ -604,9 +604,11 @@ _vdb_coach_google = None
 def get_context_openai(query, mode="kb"):
     global _vdb_kb_openai, _vdb_coach_openai
     embeddings = OpenAIEmbeddings(model="text-embedding-3-small", openai_api_key=OPENAI_KEY)
-    if mode == "coach":
+    if mode in ("coach", "combo"):
         if _vdb_coach_openai is None:
             _vdb_coach_openai = Chroma(persist_directory="data/db_index_coach_openai", embedding_function=embeddings)
+        if mode == "combo":
+            return _extract_docs(_vdb_coach_openai.similarity_search(query, k=15, filter={"category": "combo"}))
         return _extract_docs(_vdb_coach_openai.similarity_search(query, k=20))
     else:
         # kb, cases, operational — все используют kb-индекс
@@ -618,9 +620,11 @@ def get_context_openai(query, mode="kb"):
 def get_context_google(query, mode="kb"):
     global _vdb_kb_google, _vdb_coach_google
     embeddings = GoogleGenerativeAIEmbeddings(model="models/gemini-embedding-001", google_api_key=GEMINI_KEY)
-    if mode == "coach":
+    if mode in ("coach", "combo"):
         if _vdb_coach_google is None:
             _vdb_coach_google = Chroma(persist_directory="data/db_index_coach_google", embedding_function=embeddings)
+        if mode == "combo":
+            return _extract_docs(_vdb_coach_google.similarity_search(query, k=15, filter={"category": "combo"}))
         return _extract_docs(_vdb_coach_google.similarity_search(query, k=20))
     else:
         if _vdb_kb_google is None:
@@ -722,7 +726,10 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
     _is_script_early = any(kw in _t_lower_early for kw in _SCRIPT_KEYWORDS_EARLY)
 
     # Авторозмітка по контенту запиту (перемикання між режимами)
-    if _is_script_early and chat_history:
+    state_data_early = await state.get_data()
+    if state_data_early.get("combo_mode"):
+        mode_key = "combo"
+    elif _is_script_early and chat_history:
         mode_key = "coach"
     else:
         detected_mode = await detect_intent(text)
@@ -836,7 +843,7 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
         context, sources = await loop.run_in_executor(None, get_context_openai, search_query, mode_key)
         if not context.strip():
             _context_was_empty = True
-        _model = MODEL_OPENAI_COACH if mode_key == "coach" else MODEL_OPENAI
+        _model = MODEL_OPENAI_COACH if mode_key in ("coach", "combo") else MODEL_OPENAI
         stream = await client_openai.chat.completions.create(
             model=_model,
             messages=[
@@ -1513,7 +1520,7 @@ async def coach_objections(callback: types.CallbackQuery, state: FSMContext):
 @dp.callback_query(F.data == "coach_combo")
 async def coach_combo(callback: types.CallbackQuery, state: FSMContext):
     await state.set_state(UserState.mode_coach)
-    await state.update_data(chat_history=[])
+    await state.update_data(chat_history=[], combo_mode=True)
     await callback.message.answer(
         "🔗 *Комбо-протоколи*\n\n"
         "Напишіть препарат або завдання, наприклад:\n"
