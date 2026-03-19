@@ -2,12 +2,8 @@
 .env
 credentials.json
 
-# База данных
-data/bot_usage.db
-data/*.db
-
-# ChromaDB индексы (пересоздаются при индексации)
-data/db_index_*/
+# Данные (база, индексы, файлы знаний)
+data/
 
 # Python
 __pycache__/
