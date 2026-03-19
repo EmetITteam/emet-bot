@@ -727,9 +727,13 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
 
     # Авторозмітка по контенту запиту (перемикання між режимами)
     state_data_early = await state.get_data()
-    _COMBO_KEYWORDS = ["комбо", "комбін", "combo", "протокол", "поєднати", "поєднання", "сочетать", "сочетание", "совместить"]
+    _COMBO_KEYWORDS = ["комбо", "комбін", "combo", "поєднати", "поєднання", "сочетать", "сочетание", "совместить"]
     _is_combo_query = any(kw in _t_lower_early for kw in _COMBO_KEYWORDS)
-    if state_data_early.get("combo_mode") or _is_combo_query:
+    # combo_mode з кнопки — тільки для першого повідомлення, потім скидаємо
+    _combo_from_button = state_data_early.get("combo_mode", False)
+    if _combo_from_button:
+        await state.update_data(combo_mode=False)
+    if _combo_from_button or _is_combo_query:
         mode_key = "combo"
     elif _is_script_early and chat_history:
         mode_key = "coach"
