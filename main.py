@@ -2238,12 +2238,41 @@ async def main():
     await set_bot_commands(bot)
     if os.getenv("AUTO_SYNC_ENABLED", "false").lower() == "true":
         asyncio.create_task(auto_sync_task())
-        print(f"Бот Эмет запущен. Автосинхронизация каждые {sync_manager.SYNC_INTERVAL_SEC // 60} мин.")
+        print(f"Бот Эмет запущен. Автосинхронизація кожні {sync_manager.SYNC_INTERVAL_SEC // 60} хв.")
     else:
         print("Бот Эмет запущен. Автосинхронизация отключена (AUTO_SYNC_ENABLED=false).")
     asyncio.create_task(weekly_digest_task())
     asyncio.create_task(ttl_cleanup_task())
+
+    # Повідомлення адміну про запуск (щоб знати про перезапуски)
+    try:
+        await bot.send_message(ADMIN_ID, "✅ EMET Bot запущено / перезапущено.")
+    except Exception:
+        pass
+
     await dp.start_polling(bot)
+
+
+@dp.errors()
+async def handle_error(event: types.ErrorEvent) -> bool:
+    """Глобальний обробник необроблених помилок — сповіщає адміна."""
+    err = event.exception
+    update = event.update
+    context = ""
+    if update.message:
+        context = f"user={update.message.from_user.id}, text={update.message.text[:80] if update.message.text else '—'}"
+    elif update.callback_query:
+        context = f"user={update.callback_query.from_user.id}, data={update.callback_query.data}"
+    try:
+        await bot.send_message(
+            ADMIN_ID,
+            f"⚠️ *Помилка в боті*\n`{type(err).__name__}: {str(err)[:200]}`\n_{context}_",
+            parse_mode="Markdown"
+        )
+    except Exception:
+        pass
+    print(f"[ERROR] {type(err).__name__}: {err} | {context}")
+    return True  # True = помилка оброблена, aiogram не ре-рейзить
 
 
 if __name__ == "__main__":
