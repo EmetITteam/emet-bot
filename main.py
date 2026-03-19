@@ -614,7 +614,7 @@ def get_context_openai(query, mode="kb"):
         # kb, cases, operational — все используют kb-индекс
         if _vdb_kb_openai is None:
             _vdb_kb_openai = Chroma(persist_directory="data/db_index_kb_openai", embedding_function=embeddings)
-        return _extract_docs(_vdb_kb_openai.similarity_search(query, k=15))
+        return _extract_docs(_vdb_kb_openai.similarity_search(query, k=25))
 
 
 def get_context_google(query, mode="kb"):
@@ -629,7 +629,7 @@ def get_context_google(query, mode="kb"):
     else:
         if _vdb_kb_google is None:
             _vdb_kb_google = Chroma(persist_directory="data/db_index_kb_google", embedding_function=embeddings)
-        return _extract_docs(_vdb_kb_google.similarity_search(query, k=15))
+        return _extract_docs(_vdb_kb_google.similarity_search(query, k=25))
 
 
 async def detect_intent(query: str) -> str:
@@ -666,6 +666,7 @@ async def prepare_search_query(user_query: str) -> str:
             messages=[{
                 "role": "system",
                 "content": "Переведи запрос пользователя на украинский и русский языки, добавь 2-3 синонима. "
+                           "Для тем про увольнение/звільнення добавь: обходной лист, розрахунок, припинення трудового договору, безпека при роботі з кандидатами. "
                            "Выдай всё одной строкой через пробел. Это нужно для поиска по базе."
             },
             {"role": "user", "content": user_query}],
