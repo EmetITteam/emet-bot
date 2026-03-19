@@ -51,11 +51,16 @@ SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets.readonly",
 ]
 
-# Те же папки что в knowledge_base.py и build_openai_db.py
-RAG_FOLDER_IDS = [
-    "1RBXHGXOIc2kkSAw-LqzLaRqEE3Ix7L-m",
-    "1aGlC06ewPnElN1FEYjMTpDat9bbHlc2w",
-]
+# Папки Google Drive → пути индексов + размер чанка
+# label используется как суффикс в имени папки индекса: db_index_{label}_{provider}
+RAG_FOLDERS = {
+    "kb_openai":    {"folder_id": "1RBXHGXOIc2kkSAw-LqzLaRqEE3Ix7L-m", "db": "data/db_index_kb_openai",    "chunk_size": 800,  "overlap": 150, "provider": "openai"},
+    "kb_google":    {"folder_id": "1RBXHGXOIc2kkSAw-LqzLaRqEE3Ix7L-m", "db": "data/db_index_kb_google",    "chunk_size": 800,  "overlap": 150, "provider": "google"},
+    "coach_openai": {"folder_id": "1KPPBurEoCV_wWzY5HxEtv_TrMI4qXfPa",  "db": "data/db_index_coach_openai", "chunk_size": 1500, "overlap": 200, "provider": "openai"},
+    "coach_google": {"folder_id": "1KPPBurEoCV_wWzY5HxEtv_TrMI4qXfPa",  "db": "data/db_index_coach_google", "chunk_size": 1500, "overlap": 200, "provider": "google"},
+    "certs_openai": {"folder_id": "1ma-6CNO2FeHaicbRag7RvStkf5Rp1MyJ",  "db": "data/db_index_certs_openai", "chunk_size": 800,  "overlap": 100, "provider": "openai"},
+    "certs_google": {"folder_id": "1ma-6CNO2FeHaicbRag7RvStkf5Rp1MyJ",  "db": "data/db_index_certs_google", "chunk_size": 800,  "overlap": 100, "provider": "google"},
+}
 
 # ─── Авторизация ──────────────────────────────────────────────────────────────
 
@@ -163,34 +168,40 @@ def _download_bytes(drive, file_id) -> io.BytesIO:
 
 # ─── Построение индексов ──────────────────────────────────────────────────────
 
-def _build_openai_index(drive, files, target_dir):
-    docs = _files_to_documents(drive, files)
+def _build_index(drive, files, cfg, folder_label):
+    """Строит один индекс (OpenAI или Google) для переданного набора файлов."""
+    docs = _files_to_documents(drive, files, folder_label)
     if not docs:
         return
-    chunks = RecursiveCharacterTextSplitter(chunk_size=1500, chunk_overlap=200).split_documents(docs)
-    print(f"OpenAI: {len(chunks)} чанков → {target_dir}")
-    emb = OpenAIEmbeddings(model="text-embedding-3-small", openai_api_key=OPENAI_KEY)
-    _batch_to_chroma(chunks, emb, target_dir, rate_limit_sleep=10, rate_limit_keywords=["429", "RateLimitError"])
+    chunks = RecursiveCharacterTextSplitter(
+        chunk_size=cfg["chunk_size"], chunk_overlap=cfg["overlap"]
+    ).split_documents(docs)
+    target_dir = cfg["db"]
+    print(f"  [{cfg['provider']}] {len(chunks)} чанків → {target_dir}")
+    if cfg["provider"] == "openai":
+        emb = OpenAIEmbeddings(model="text-embedding-3-small", openai_api_key=OPENAI_KEY)
+        _batch_to_chroma(chunks, emb, target_dir, rate_limit_sleep=10, rate_limit_keywords=["429", "RateLimitError"])
+    else:
+        emb = GoogleGenerativeAIEmbeddings(model="models/gemini-embedding-001", google_api_key=GEMINI_KEY)
+        _batch_to_chroma(chunks, emb, target_dir, rate_limit_sleep=30, rate_limit_keywords=["429", "RESOURCE_EXHAUSTED", "503", "UNAVAILABLE"])
 
 
-def _build_google_index(drive, files, target_dir):
-    docs = _files_to_documents(drive, files)
-    if not docs:
-        return
-    chunks = RecursiveCharacterTextSplitter(chunk_size=1500, chunk_overlap=200).split_documents(docs)
-    print(f"Google: {len(chunks)} чанков → {target_dir}")
-    emb = GoogleGenerativeAIEmbeddings(model="models/gemini-embedding-001", google_api_key=GEMINI_KEY)
-    _batch_to_chroma(chunks, emb, target_dir, rate_limit_sleep=30, rate_limit_keywords=["429", "RESOURCE_EXHAUSTED", "503", "UNAVAILABLE"])
-
-
-def _files_to_documents(drive, files):
+def _files_to_documents(drive, files, folder_label=""):
     documents = []
     for f in files:
         text = extract_text(drive, f)
         if text:
+            name_lower = f["name"].lower()
+            category = "combo" if any(w in name_lower for w in ["протокол", "комбін", "combo"]) else "general"
             documents.append(Document(
                 page_content=text,
-                metadata={"source": f["name"], "url": f.get("webViewLink", "")}
+                metadata={
+                    "source":    f["name"],
+                    "url":       f.get("webViewLink", ""),
+                    "file_id":   f["id"],
+                    "category":  category,
+                    "folder":    folder_label,
+                }
             ))
     return documents
 
@@ -221,61 +232,67 @@ def _batch_to_chroma(chunks, embeddings, persist_dir, rate_limit_sleep, rate_lim
 
 def sync_rag_indexes():
     """
-    Проверяет изменения в RAG-папках.
-    При наличии изменений: пересобирает оба индекса в temp-директориях, затем атомарный swap.
-    Возвращает список имён изменённых файлов (пустой = изменений нет).
+    Перевіряє зміни в кожній RAG-папці окремо.
+    Пересобирає тільки ті індекси, де є зміни (атомарний swap).
+    Повертає список імен змінених файлів.
     """
     drive, _ = get_services()
 
-    all_files = []
-    for folder_id in RAG_FOLDER_IDS:
-        all_files.extend(list_files_with_meta(drive, folder_id))
-
-    # Проверяем что изменилось
+    # Поточний стан БД
     indexed = {r[0]: r[1] for r in db.query("SELECT file_id, modified_time FROM sync_state")}
 
-    changed = [f for f in all_files if indexed.get(f["id"]) != f["modifiedTime"]]
+    # Групуємо конфіги по folder_id щоб не сканувати одну папку двічі
+    by_folder = {}
+    for label, cfg in RAG_FOLDERS.items():
+        fid = cfg["folder_id"]
+        if fid not in by_folder:
+            by_folder[fid] = {"files": None, "labels": []}
+        by_folder[fid]["labels"].append(label)
 
-    if not changed:
-        print(f"RAG sync: изменений нет (проверено {len(all_files)} файлов)")
-        return []
+    all_changed_names = []
 
-    print(f"RAG sync: {len(changed)} изменений. Начинаю пересборку обоих индексов...")
+    for folder_id, info in by_folder.items():
+        files = list_files_with_meta(drive, folder_id)
+        info["files"] = files
+        changed = [f for f in files if indexed.get(f["id"]) != f["modifiedTime"]]
 
-    tmp_openai = "data/db_index_openai_building"
-    tmp_google = "data/db_index_google_building"
-    shutil.rmtree(tmp_openai, ignore_errors=True)
-    shutil.rmtree(tmp_google, ignore_errors=True)
+        if not changed:
+            print(f"RAG sync: немає змін у папці {folder_id} ({len(files)} файлів)")
+            continue
 
-    try:
-        _build_openai_index(drive, all_files, tmp_openai)
-        _build_google_index(drive, all_files, tmp_google)
-    except Exception as e:
-        print(f"Ошибка пересборки индексов: {e}")
-        shutil.rmtree(tmp_openai, ignore_errors=True)
-        shutil.rmtree(tmp_google, ignore_errors=True)
-        return []
+        folder_label = info["labels"][0].split("_")[0]  # "kb", "coach", "certs"
+        print(f"RAG sync: {len(changed)} змін у [{folder_label}]. Перебудовую індекси...")
 
-    # Атомарный swap: live → old → new → live
-    for live, tmp in [("data/db_index_openai", tmp_openai), ("data/db_index_google", tmp_google)]:
-        old = live + "_old"
-        shutil.rmtree(old, ignore_errors=True)
-        if os.path.exists(live):
-            os.rename(live, old)
-        os.rename(tmp, live)
-        shutil.rmtree(old, ignore_errors=True)
+        for label in info["labels"]:
+            cfg = RAG_FOLDERS[label]
+            tmp_dir = cfg["db"] + "_building"
+            shutil.rmtree(tmp_dir, ignore_errors=True)
+            try:
+                _build_index(drive, files, {**cfg, "db": tmp_dir}, folder_label)
+                # Атомарний swap
+                old_dir = cfg["db"] + "_old"
+                shutil.rmtree(old_dir, ignore_errors=True)
+                if os.path.exists(cfg["db"]):
+                    os.rename(cfg["db"], old_dir)
+                os.rename(tmp_dir, cfg["db"])
+                shutil.rmtree(old_dir, ignore_errors=True)
+                print(f"  [{label}] індекс оновлено: {cfg['db']}")
+            except Exception as e:
+                print(f"  [{label}] помилка побудови: {e}")
+                shutil.rmtree(tmp_dir, ignore_errors=True)
 
-    # Обновляем sync_state для всех файлов (не только изменённых)
-    db.executemany(
-        "INSERT INTO sync_state (file_id, file_name, modified_time, indexed_at) VALUES (%s,%s,%s,%s) "
-        "ON CONFLICT (file_id) DO UPDATE SET file_name=EXCLUDED.file_name, "
-        "modified_time=EXCLUDED.modified_time, indexed_at=EXCLUDED.indexed_at",
-        [(f["id"], f["name"], f["modifiedTime"], datetime.now().isoformat()) for f in all_files]
-    )
+        # Оновлюємо sync_state
+        db.executemany(
+            "INSERT INTO sync_state (file_id, file_name, modified_time, indexed_at) VALUES (%s,%s,%s,%s) "
+            "ON CONFLICT (file_id) DO UPDATE SET file_name=EXCLUDED.file_name, "
+            "modified_time=EXCLUDED.modified_time, indexed_at=EXCLUDED.indexed_at",
+            [(f["id"], f["name"], f["modifiedTime"], datetime.now().isoformat()) for f in files]
+        )
+        all_changed_names.extend(f["name"] for f in changed)
 
-    changed_names = [f["name"] for f in changed]
-    print(f"RAG sync завершён. Изменённые файлы: {changed_names}")
-    return changed_names
+    if all_changed_names:
+        print(f"RAG sync завершено. Змінено: {all_changed_names}")
+    return all_changed_names
 
 
 # ─── Синхронизация курсов из Google Sheets ───────────────────────────────────

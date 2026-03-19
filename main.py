@@ -1,4 +1,5 @@
 import asyncio
+import io
 import os
 import json
 import db
@@ -8,6 +9,7 @@ from datetime import datetime
 import sync_manager
 from openai import AsyncOpenAI
 from google import genai
+from googleapiclient.http import MediaIoBaseDownload
 import anthropic
 from aiogram import Bot, Dispatcher, types, F
 from aiogram.filters import Command, StateFilter
@@ -80,6 +82,7 @@ class UserState(StatesGroup):
     mode_cases = State()       # Режим 4: Разбор кейсов
     mode_operational = State() # Режим 5: Операционные вопросы
     mode_onboarding = State()  # Режим 6: Онбординг
+    mode_certs = State()       # Режим 7: Сертифікати та документи
     lms_test_active = State()
     waiting_for_json = State()
     voice_confirm = State()  # Подтверждение распознанного голоса/фото
@@ -597,12 +600,23 @@ def _extract_docs(docs):
 
 _vdb_kb_openai    = None
 _vdb_coach_openai = None
+_vdb_certs_openai = None
 _vdb_kb_google    = None
 _vdb_coach_google = None
+_vdb_certs_google = None
+
+# Drive сервіс для скачування сертифікатів (реюзаємо авторизацію із sync_manager)
+_drive_service = None
+
+def get_drive_service():
+    global _drive_service
+    if _drive_service is None:
+        _drive_service, _ = sync_manager.get_services()
+    return _drive_service
 
 
 def get_context_openai(query, mode="kb"):
-    global _vdb_kb_openai, _vdb_coach_openai
+    global _vdb_kb_openai, _vdb_coach_openai, _vdb_certs_openai
     embeddings = OpenAIEmbeddings(model="text-embedding-3-small", openai_api_key=OPENAI_KEY)
     if mode in ("coach", "combo"):
         if _vdb_coach_openai is None:
@@ -610,15 +624,19 @@ def get_context_openai(query, mode="kb"):
         if mode == "combo":
             return _extract_docs(_vdb_coach_openai.similarity_search(query, k=15, filter={"category": "combo"}))
         return _extract_docs(_vdb_coach_openai.similarity_search(query, k=20))
+    elif mode == "certs":
+        if _vdb_certs_openai is None:
+            _vdb_certs_openai = Chroma(persist_directory="data/db_index_certs_openai", embedding_function=embeddings)
+        return _extract_docs(_vdb_certs_openai.similarity_search(query, k=10))
     else:
-        # kb, cases, operational — все используют kb-индекс
+        # kb, cases, operational
         if _vdb_kb_openai is None:
             _vdb_kb_openai = Chroma(persist_directory="data/db_index_kb_openai", embedding_function=embeddings)
         return _extract_docs(_vdb_kb_openai.similarity_search(query, k=25))
 
 
 def get_context_google(query, mode="kb"):
-    global _vdb_kb_google, _vdb_coach_google
+    global _vdb_kb_google, _vdb_coach_google, _vdb_certs_google
     embeddings = GoogleGenerativeAIEmbeddings(model="models/gemini-embedding-001", google_api_key=GEMINI_KEY)
     if mode in ("coach", "combo"):
         if _vdb_coach_google is None:
@@ -626,6 +644,10 @@ def get_context_google(query, mode="kb"):
         if mode == "combo":
             return _extract_docs(_vdb_coach_google.similarity_search(query, k=15, filter={"category": "combo"}))
         return _extract_docs(_vdb_coach_google.similarity_search(query, k=20))
+    elif mode == "certs":
+        if _vdb_certs_google is None:
+            _vdb_certs_google = Chroma(persist_directory="data/db_index_certs_google", embedding_function=embeddings)
+        return _extract_docs(_vdb_certs_google.similarity_search(query, k=10))
     else:
         if _vdb_kb_google is None:
             _vdb_kb_google = Chroma(persist_directory="data/db_index_kb_google", embedding_function=embeddings)
@@ -647,14 +669,15 @@ async def detect_intent(query: str) -> str:
                 "их состав, показания, применение, дозировки, отличия; А ТАКЖЕ продажи, скрипты, "
                 "возражения, переговоры с врачами, косметология.\n"
                 "- 'cases' — разбор конкретного диалога/ситуации с клиентом, анализ ошибок встречи.\n"
-                "- 'operational' — командировки, возврат товара, семинары, SLA, оформление расходов.\n\n"
-                "Отвечай только одним словом: kb, coach, cases или operational."
+                "- 'operational' — командировки, возврат товара, семинары, SLA, оформление расходов.\n"
+                "- 'certs' — сертификаты, регистрационные удостоверения, разрешительные документы на препараты.\n\n"
+                "Отвечай только одним словом: kb, coach, cases, operational или certs."
             )},
             {"role": "user", "content": query}],
             temperature=0.0, max_tokens=10
         )
         result = response.choices[0].message.content.strip().lower()
-        return result if result in ("kb", "coach", "cases", "operational") else "kb"
+        return result if result in ("kb", "coach", "cases", "operational", "certs") else "kb"
     except Exception:
         return "kb"
 
@@ -744,9 +767,10 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
         mode_key = detected_mode
 
     state_map = {
-        "coach": UserState.mode_coach,
-        "cases": UserState.mode_cases,
+        "coach":       UserState.mode_coach,
+        "cases":       UserState.mode_cases,
         "operational": UserState.mode_operational,
+        "certs":       UserState.mode_certs,
     }
     await state.set_state(state_map.get(mode_key, UserState.mode_kb))
 
@@ -949,12 +973,14 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
     _uname = message.from_user.username or f"id{message.from_user.id}"
     log_to_db(message.from_user.id, _uname, mode_key, ai_used, text, answer, bool(used_links), _model_used, _tokens_in, _tokens_out)
 
-    # Сохраняем историю диалога (только coach-режим, т.к. он многоходовой)
-    if mode_key == "coach":
+    # Зберігаємо історію діалогу для всіх режимів
+    # coach: 3 обміни (6 повідомлень), решта: 2 обміни (4 повідомлення)
+    if mode_key in ("coach", "combo", "kb", "cases", "operational", "certs"):
         clean_answer = re.sub(r'\[?REF\d+\]?', '', answer).strip()
         chat_history.append({"role": "user", "content": text})
         chat_history.append({"role": "assistant", "content": clean_answer})
-        chat_history = chat_history[-6:]  # храним последние 3 обмена
+        limit = 6 if mode_key == "coach" else 4
+        chat_history = chat_history[-limit:]
         await state.update_data(chat_history=chat_history)
 
     if _context_was_empty and mode_key == "kb":
@@ -967,6 +993,23 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
             print(f"Ошибка уведомления админа: {admin_err}")
 
     await send_paginated(message, state, answer, sent_msg=sent_msg)
+
+    # Після відповіді в режимі Certs — пропонуємо завантажити знайдені файли
+    if mode_key == "certs" and sources:
+        cert_files = []
+        for doc_id, data in sources.items():
+            file_id = data.get("file_id", "")
+            if file_id:
+                cert_files.append({"file_id": file_id, "name": data["name"]})
+        if cert_files:
+            await state.update_data(cert_files=cert_files)
+            builder = InlineKeyboardBuilder()
+            for idx, cf in enumerate(cert_files[:5]):  # max 5 кнопок
+                short_name = cf["name"][:35] + "…" if len(cf["name"]) > 35 else cf["name"]
+                builder.button(text=f"📥 {short_name}", callback_data=f"cert_dl_{idx}")
+            builder.button(text="🏠 Головне меню", callback_data="go_home")
+            builder.adjust(1)
+            await message.answer("Завантажити оригінальний файл:", reply_markup=builder.as_markup())
 
     # Після відповіді в режимі Coach — показуємо меню Coach знову
     if mode_key == "coach":
@@ -1543,18 +1586,46 @@ async def coach_combo(callback: types.CallbackQuery, state: FSMContext):
 
 @dp.callback_query(F.data == "coach_certs")
 async def coach_certs(callback: types.CallbackQuery, state: FSMContext):
-    await state.set_state(UserState.mode_coach)
-    await state.update_data(chat_history=[])
+    await state.set_state(UserState.mode_certs)
+    await state.update_data(chat_history=[], cert_files=[])
     await callback.message.answer(
-        "📜 *Сертифікати*\n\n"
-        "Напишіть назву препарату або компанії, наприклад:\n"
+        "📜 *Сертифікати та реєстраційні документи*\n\n"
+        "Напишіть назву препарату або документа, наприклад:\n"
         "• _«Сертифікат Vitaran»_\n"
-        "• _«Документи на Ellansé»_\n"
-        "• _«Реєстрація препаратів ЕМЕТ»_\n\n"
-        "Отримаєте інформацію з бази знань.",
+        "• _«Реєстраційне посвідчення Ellansé»_\n"
+        "• _«Документи на Neuramis»_\n\n"
+        "Знайду документ і запропоную завантажити оригінальний файл 📥",
         parse_mode="Markdown"
     )
     await callback.answer()
+
+
+@dp.callback_query(F.data.startswith("cert_dl_"))
+async def download_cert(callback: types.CallbackQuery, state: FSMContext):
+    await callback.answer("⏳ Завантажую...")
+    idx = int(callback.data.replace("cert_dl_", ""))
+    data = await state.get_data()
+    cert_files = data.get("cert_files", [])
+    if idx >= len(cert_files):
+        await callback.message.answer("Файл не знайдено. Спробуйте зробити новий запит.")
+        return
+    cf = cert_files[idx]
+    try:
+        loop = asyncio.get_running_loop()
+        drive = await loop.run_in_executor(None, get_drive_service)
+        buf = io.BytesIO()
+        request = drive.files().get_media(fileId=cf["file_id"])
+        downloader = MediaIoBaseDownload(buf, request)
+        done = False
+        while not done:
+            _, done = downloader.next_chunk()
+        buf.seek(0)
+        await callback.message.answer_document(
+            types.BufferedInputFile(buf.read(), filename=cf["name"]),
+            caption=f"📄 {cf['name']}"
+        )
+    except Exception as e:
+        await callback.message.answer(f"Помилка завантаження: {e}")
 
 
 @dp.callback_query(F.data == "coach_seasonal")
@@ -2069,7 +2140,8 @@ async def _send_profile(user, message):
 # --- ОСНОВНОЙ ОБРАБОТЧИК СООБЩЕНИЙ ---
 @dp.message(StateFilter(
     UserState.mode_kb, UserState.mode_coach, UserState.mode_learning,
-    UserState.mode_cases, UserState.mode_operational, UserState.mode_onboarding, None
+    UserState.mode_cases, UserState.mode_operational, UserState.mode_onboarding,
+    UserState.mode_certs, None
 ))
 async def handle_message(message: types.Message, state: FSMContext):
     if not message.text:
@@ -2196,11 +2268,13 @@ async def auto_sync_task():
 
         # Если RAG обновился — сбрасываем синглтоны, чтобы следующий запрос загрузил новый индекс
         if result["rag_updated"]:
-            global _vdb_kb_openai, _vdb_coach_openai, _vdb_kb_google, _vdb_coach_google
+            global _vdb_kb_openai, _vdb_coach_openai, _vdb_certs_openai, _vdb_kb_google, _vdb_coach_google, _vdb_certs_google
             _vdb_kb_openai = None
             _vdb_coach_openai = None
+            _vdb_certs_openai = None
             _vdb_kb_google = None
             _vdb_coach_google = None
+            _vdb_certs_google = None
             files_str = ", ".join(result["rag_updated"][:5])
             if len(result["rag_updated"]) > 5:
                 files_str += f" и ещё {len(result['rag_updated']) - 5}"

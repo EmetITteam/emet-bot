@@ -22,7 +22,8 @@ load_dotenv()
 
 FOLDER_KB    = '1RBXHGXOIc2kkSAw-LqzLaRqEE3Ix7L-m'  # Регламенты → db_index_kb_google
 FOLDER_COACH = '1KPPBurEoCV_wWzY5HxEtv_TrMI4qXfPa'  # Продукты   → db_index_coach_google
-FOLDER_IDS = [FOLDER_KB, FOLDER_COACH]  # для обратной совместимости
+FOLDER_CERTS = '1ma-6CNO2FeHaicbRag7RvStkf5Rp1MyJ'  # Сертификаты → db_index_certs_google
+FOLDER_IDS = [FOLDER_KB, FOLDER_COACH, FOLDER_CERTS]
 
 SERVICE_ACCOUNT_FILE = 'credentials.json'
 SCOPES = ['https://www.googleapis.com/auth/drive.readonly']
@@ -140,9 +141,10 @@ def download_and_parse_files(service, drive_files):
                 name_lower = file['name'].lower()
                 category = "combo" if any(w in name_lower for w in ["протокол", "комбін", "combo"]) else "general"
                 metadata = {
-                    "source": file['name'],
-                    "url": file.get('webViewLink', ''),
-                    "category": category
+                    "source":   file['name'],
+                    "url":      file.get('webViewLink', ''),
+                    "file_id":  file['id'],
+                    "category": category,
                 }
                 all_documents.append(Document(page_content=text, metadata=metadata))
         except Exception as e:
@@ -254,7 +256,8 @@ def run_indexing():
     print("=== Сборка раздельных баз Google ===")
     build_db_for_folder(service, FOLDER_KB,    "data/db_index_kb_google",    "KB-регламенты")
     build_db_for_folder(service, FOLDER_COACH, "data/db_index_coach_google", "Коуч-продукты")
-    print("\n--- ГОТОВО! Базы KB и Коуч сохранены раздельно ---")
+    build_db_for_folder(service, FOLDER_CERTS, "data/db_index_certs_google", "Сертификаты")
+    print("\n--- ГОТОВО! Базы KB, Коуч и Сертификаты сохранены раздельно ---")
 
 if __name__ == "__main__":
     run_indexing()
