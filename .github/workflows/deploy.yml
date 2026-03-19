@@ -19,5 +19,7 @@ jobs:
           script: |
             cd /opt/emet-bot
             git pull origin main
+            # Маркер деплою — бот побачить його при старті і надішле правильне повідомлення
+            echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > data/deploy_marker.txt
             docker compose up --build -d
             docker image prune -f

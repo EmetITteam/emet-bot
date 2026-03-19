@@ -2244,9 +2244,28 @@ async def main():
     asyncio.create_task(weekly_digest_task())
     asyncio.create_task(ttl_cleanup_task())
 
-    # Повідомлення адміну про запуск (щоб знати про перезапуски)
+    # Повідомлення адміну про запуск — розрізняємо деплой від несподіваного рестарту
     try:
-        await bot.send_message(ADMIN_ID, "✅ EMET Bot запущено / перезапущено.")
+        marker_path = "data/deploy_marker.txt"
+        if os.path.exists(marker_path):
+            with open(marker_path) as f:
+                deploy_time = f.read().strip()
+            os.remove(marker_path)
+            await bot.send_message(
+                ADMIN_ID,
+                f"✅ *Деплой завершено успішно*\n"
+                f"Бот оновлено та перезапущено.\n"
+                f"_Час деплою: {deploy_time}_",
+                parse_mode="Markdown"
+            )
+        else:
+            await bot.send_message(
+                ADMIN_ID,
+                "⚠️ *Бот перезапустився*\n"
+                "Причина невідома — можливий краш або ручний рестарт.\n"
+                "Перевір логи: `docker logs emet_bot_app --tail 50`",
+                parse_mode="Markdown"
+            )
     except Exception:
         pass
 
