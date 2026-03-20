@@ -181,10 +181,20 @@ def extract_text_from_bytes(filename: str, content: bytes) -> str:
     return ""
 
 
-def index_document(filename: str, text: str, source_label: str = "manual_upload", uploaded_by: str = "admin_panel"):
-    """Add document to both ChromaDB indices in a background thread."""
+def index_document(filename: str, text: str, source_label: str = "manual_upload", uploaded_by: str = "admin_panel", category: str = "kb"):
+    """Add document to ChromaDB indices in a background thread.
+    category: 'kb' → kb indices, 'coach' → coach indices, 'both' → all four indices.
+    """
     if not text or len(text.strip()) < 50:
         return False, "Текст слишком короткий или пустой"
+
+    _INDEX_MAP = {
+        "kb":    [("data/db_index_kb_openai",    "openai"), ("data/db_index_kb_google",    "google")],
+        "coach": [("data/db_index_coach_openai", "openai"), ("data/db_index_coach_google", "google")],
+        "both":  [("data/db_index_kb_openai",    "openai"), ("data/db_index_kb_google",    "google"),
+                  ("data/db_index_coach_openai", "openai"), ("data/db_index_coach_google", "google")],
+    }
+    targets = _INDEX_MAP.get(category, _INDEX_MAP["kb"])
 
     def _do_index():
         try:
@@ -194,27 +204,17 @@ def index_document(filename: str, text: str, source_label: str = "manual_upload"
             from langchain_google_genai import GoogleGenerativeAIEmbeddings
             from langchain_text_splitters import RecursiveCharacterTextSplitter
 
-            doc = Document(page_content=text, metadata={"source": filename, "url": source_label})
+            doc = Document(page_content=text, metadata={"source": filename, "url": source_label, "folder": category})
             splitter = RecursiveCharacterTextSplitter(chunk_size=1500, chunk_overlap=200)
             chunks = splitter.split_documents([doc])
 
-            if OPENAI_KEY:
-                emb_openai = OpenAIEmbeddings(model="text-embedding-3-small", openai_api_key=OPENAI_KEY)
-                db_openai = Chroma(
-                    persist_directory="data/db_index_kb_openai",
-                    embedding_function=emb_openai
-                )
-                db_openai.add_documents(chunks)
-
-            if GEMINI_KEY:
-                emb_google = GoogleGenerativeAIEmbeddings(
-                    model="models/gemini-embedding-001", google_api_key=GEMINI_KEY
-                )
-                db_google = Chroma(
-                    persist_directory="data/db_index_kb_google",
-                    embedding_function=emb_google
-                )
-                db_google.add_documents(chunks)
+            for persist_dir, emb_type in targets:
+                if emb_type == "openai" and OPENAI_KEY:
+                    emb = OpenAIEmbeddings(model="text-embedding-3-small", openai_api_key=OPENAI_KEY)
+                    Chroma(persist_directory=persist_dir, embedding_function=emb).add_documents(chunks)
+                elif emb_type == "google" and GEMINI_KEY:
+                    emb = GoogleGenerativeAIEmbeddings(model="models/gemini-embedding-001", google_api_key=GEMINI_KEY)
+                    Chroma(persist_directory=persist_dir, embedding_function=emb).add_documents(chunks)
 
             # Record in sync_state
             db.execute(
@@ -708,7 +708,15 @@ def knowledge():
           <div class="text-muted" style="margin-top:4px">PDF, DOCX, TXT — до 20 МБ</div>
         </div>
       </div>
-      <div style="margin-top:16px">
+      <div style="margin-top:14px">
+        <label style="font-size:13px;font-weight:600;color:#444;display:block;margin-bottom:6px">Категорія індексу</label>
+        <select name="category" style="width:100%;padding:9px 12px;border:1px solid #ddd;border-radius:8px;font-size:14px;background:#f9f9f9">
+          <option value="kb">📚 База знань (регламенти, правила)</option>
+          <option value="coach">💼 Коуч (продажі, аргументи, скрипти)</option>
+          <option value="both">📚+💼 Обидва індекси</option>
+        </select>
+      </div>
+      <div style="margin-top:12px">
         <button class="btn btn-success" type="submit" style="width:100%">⬆️ Загрузить и проиндексировать</button>
       </div>
     </form>
@@ -767,10 +775,15 @@ def knowledge_upload():
         flash(f"Не удалось извлечь текст из «{fname}». Проверьте формат файла.", "danger")
         return redirect(url_for("knowledge"))
 
+    category = request.form.get("category", "kb")
+    if category not in ("kb", "coach", "both"):
+        category = "kb"
     ok, msg = index_document(fname, text, source_label="manual_upload",
-                             uploaded_by=session.get("username", "admin_panel"))
+                             uploaded_by=session.get("username", "admin_panel"),
+                             category=category)
     if ok:
-        flash(f"✅ «{fname}» отправлен на индексацию. Файл появится в списке через несколько секунд.", "success")
+        cat_label = {"kb": "База знань", "coach": "Коуч", "both": "База знань + Коуч"}.get(category, category)
+        flash(f"✅ «{fname}» відправлено на індексацію ({cat_label}). Файл з'явиться в списку за кілька секунд.", "success")
     else:
         flash(f"Ошибка индексации: {msg}", "danger")
     return redirect(url_for("knowledge"))
