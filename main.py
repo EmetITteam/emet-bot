@@ -1749,14 +1749,18 @@ async def download_cert(callback: types.CallbackQuery, state: FSMContext):
     cf = cert_files[idx]
     try:
         loop = asyncio.get_running_loop()
-        drive = await loop.run_in_executor(None, get_drive_service)
-        buf = io.BytesIO()
-        request = drive.files().get_media(fileId=cf["file_id"])
-        downloader = MediaIoBaseDownload(buf, request)
-        done = False
-        while not done:
-            _, done = downloader.next_chunk()
-        buf.seek(0)
+
+        def _download():
+            drive = get_drive_service()
+            buf = io.BytesIO()
+            dl = MediaIoBaseDownload(buf, drive.files().get_media(fileId=cf["file_id"]))
+            done = False
+            while not done:
+                _, done = dl.next_chunk()
+            buf.seek(0)
+            return buf
+
+        buf = await loop.run_in_executor(None, _download)
         await callback.message.answer_document(
             types.BufferedInputFile(buf.read(), filename=cf["name"]),
             caption=f"📄 {cf['name']}"
