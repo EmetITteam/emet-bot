@@ -584,16 +584,17 @@ def _extract_docs(docs):
     for doc in docs:
         name = doc.metadata.get("source", "Неизвестный документ")
         url = doc.metadata.get("url", "")
+        file_id = doc.metadata.get("file_id", "")
         content = doc.page_content
         if name not in grouped_docs:
-            grouped_docs[name] = {"url": url, "content": []}
+            grouped_docs[name] = {"url": url, "file_id": file_id, "content": []}
         grouped_docs[name]["content"].append(content)
 
     for i, (name, data) in enumerate(grouped_docs.items(), 1):
         doc_id = f"REF{i}"
         full_content = "\n".join(data["content"])
         context_text += f"=== ИСТОЧНИК: {doc_id} | НАЗВАНИЕ: {name} ===\n{full_content}\n\n"
-        sources[doc_id] = {"name": name, "url": data["url"]}
+        sources[doc_id] = {"name": name, "url": data["url"], "file_id": data.get("file_id", "")}
 
     return context_text, sources
 
