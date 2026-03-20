@@ -116,7 +116,7 @@ from prompts import SYSTEM_PROMPTS
 # --- 4. ИНТЕРФЕЙС (МЕНЮ) ---
 def get_main_menu():
     builder = InlineKeyboardBuilder()
-    builder.button(text="🔍 HR і регламенти", callback_data="set_kb")
+    builder.button(text="📋 HR і регламенти", callback_data="set_kb")
     builder.button(text="💼 Sales Коуч", callback_data="set_coach")
     builder.button(text="🎓 Навчання і тести", callback_data="set_learn")
     builder.button(text="🔍 Розбір кейсів", callback_data="set_cases")
@@ -141,7 +141,7 @@ def init_db():
                  title TEXT, description TEXT, data TEXT, created_at TEXT,
                  drive_file_id TEXT DEFAULT NULL, drive_modified TEXT DEFAULT NULL)''')
 
-            # Темы курса
+            # Теми курсу
             cur.execute('''CREATE TABLE IF NOT EXISTS topics
                 (id SERIAL PRIMARY KEY,
                  course_id INTEGER, order_num INTEGER, title TEXT, content TEXT,
@@ -465,7 +465,7 @@ def log_to_db(user_id, username, mode, ai_engine, question, answer, has_source, 
              mode, ai_engine, question, answer, 1 if has_source else 0, model, tokens_in, tokens_out)
         )
     except Exception as e:
-        print(f"Ошибка записи в БД: {e}")
+        print(f"[log] помилка запису в БД: {e}")
 
 
 def save_course(title, json_data):
@@ -475,7 +475,7 @@ def save_course(title, json_data):
             (title, json_data, datetime.now().isoformat())
         )
     except Exception as e:
-        print(f"Ошибка сохранения курса: {e}")
+        print(f"[log] помилка збереження курсу: {e}")
 
 
 def get_courses():
@@ -624,10 +624,24 @@ def _extract_docs(docs):
 
 _vdb_kb_openai    = None
 _vdb_coach_openai = None
-_vdb_certs_openai = None
 _vdb_kb_google    = None
 _vdb_coach_google = None
-_vdb_certs_google = None
+
+# Embedding синглтони — створюються один раз, а не на кожен запит
+_emb_openai = None
+_emb_google = None
+
+def _get_emb_openai():
+    global _emb_openai
+    if _emb_openai is None:
+        _emb_openai = OpenAIEmbeddings(model="text-embedding-3-small", openai_api_key=OPENAI_KEY)
+    return _emb_openai
+
+def _get_emb_google():
+    global _emb_google
+    if _emb_google is None:
+        _emb_google = GoogleGenerativeAIEmbeddings(model="models/gemini-embedding-001", google_api_key=GEMINI_KEY)
+    return _emb_google
 
 # Drive сервіс для скачування сертифікатів (реюзаємо авторизацію із sync_manager)
 _drive_service = None
@@ -640,38 +654,30 @@ def get_drive_service():
 
 
 def get_context_openai(query, mode="kb"):
-    global _vdb_kb_openai, _vdb_coach_openai, _vdb_certs_openai
-    embeddings = OpenAIEmbeddings(model="text-embedding-3-small", openai_api_key=OPENAI_KEY)
+    global _vdb_kb_openai, _vdb_coach_openai
+    embeddings = _get_emb_openai()
     if mode in ("coach", "combo"):
         if _vdb_coach_openai is None:
             _vdb_coach_openai = Chroma(persist_directory="data/db_index_coach_openai", embedding_function=embeddings)
         if mode == "combo":
             return _extract_docs(_vdb_coach_openai.similarity_search(query, k=15, filter={"category": "combo"}))
         return _extract_docs(_vdb_coach_openai.similarity_search(query, k=20))
-    elif mode == "certs":
-        if _vdb_certs_openai is None:
-            _vdb_certs_openai = Chroma(persist_directory="data/db_index_certs_openai", embedding_function=embeddings)
-        return _extract_docs(_vdb_certs_openai.similarity_search(query, k=10))
     else:
-        # kb, cases, operational
+        # kb, cases, operational, certs (fallback — не повинен дістатися сюди для certs)
         if _vdb_kb_openai is None:
             _vdb_kb_openai = Chroma(persist_directory="data/db_index_kb_openai", embedding_function=embeddings)
         return _extract_docs(_vdb_kb_openai.similarity_search(query, k=25))
 
 
 def get_context_google(query, mode="kb"):
-    global _vdb_kb_google, _vdb_coach_google, _vdb_certs_google
-    embeddings = GoogleGenerativeAIEmbeddings(model="models/gemini-embedding-001", google_api_key=GEMINI_KEY)
+    global _vdb_kb_google, _vdb_coach_google
+    embeddings = _get_emb_google()
     if mode in ("coach", "combo"):
         if _vdb_coach_google is None:
             _vdb_coach_google = Chroma(persist_directory="data/db_index_coach_google", embedding_function=embeddings)
         if mode == "combo":
             return _extract_docs(_vdb_coach_google.similarity_search(query, k=15, filter={"category": "combo"}))
         return _extract_docs(_vdb_coach_google.similarity_search(query, k=20))
-    elif mode == "certs":
-        if _vdb_certs_google is None:
-            _vdb_certs_google = Chroma(persist_directory="data/db_index_certs_google", embedding_function=embeddings)
-        return _extract_docs(_vdb_certs_google.similarity_search(query, k=10))
     else:
         if _vdb_kb_google is None:
             _vdb_kb_google = Chroma(persist_directory="data/db_index_kb_google", embedding_function=embeddings)
@@ -731,7 +737,7 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
 
     greetings = ["привет", "здравствуйте", "добрый день", "привіт", "добрий день"]
     if t in greetings:
-        return await message.answer("Здравствуйте! Я готов к работе. Задайте ваш вопрос.")
+        return await message.answer("Вітаю! Я готовий до роботи. Задайте ваше запитання.")
 
     # Перехват вопросов о возможностях бота
     self_query_keywords = [
@@ -764,14 +770,14 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
     state_data = await state.get_data()
     chat_history = state_data.get("chat_history", [])
 
-    # Ключевые слова запросов на скрипт/диалог
-    _SCRIPT_KEYWORDS_EARLY = [
+    # Ключевые слова запросов на скрипт/диалог (один список — используется в двух местах ниже)
+    _SCRIPT_KEYWORDS = [
         "дай диалог", "дай діалог", "дай скрипт", "скрипт з лікарем",
         "діалог з лікарем", "диалог с врачом", "розіграй діалог",
         "зіграй діалог", "покажи діалог", "покажи диалог",
     ]
     _t_lower_early = text.lower().strip()
-    _is_script_early = any(kw in _t_lower_early for kw in _SCRIPT_KEYWORDS_EARLY)
+    _is_script_early = any(kw in _t_lower_early for kw in _SCRIPT_KEYWORDS)
 
     # Авторозмітка по контенту запиту (перемикання між режимами)
     state_data_early = await state.get_data()
@@ -865,11 +871,7 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
         "не впевнений", "не уверен",
         "не потрібно", "не нужно",
     ]
-    _SCRIPT_KEYWORDS = [
-        "дай диалог", "дай діалог", "дай скрипт", "скрипт з лікарем",
-        "діалог з лікарем", "диалог с врачом", "розіграй діалог",
-        "зіграй діалог", "покажи діалог", "покажи диалог",
-    ]
+    # _SCRIPT_KEYWORDS визначений вище і переюзається тут
     t_lower = t
     _detected_product = next((p for p in _EMET_PRODUCTS if p in t_lower), None)
     _has_objection = any(kw in t_lower for kw in _OBJECTION_KEYWORDS)
@@ -943,12 +945,12 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
             stream_options={"include_usage": True},
         )
         chunks = []
-        last_edit = asyncio.get_event_loop().time()
+        last_edit = asyncio.get_running_loop().time()
         async for chunk in stream:
             delta = chunk.choices[0].delta.content if chunk.choices else None
             if delta:
                 chunks.append(delta)
-                now = asyncio.get_event_loop().time()
+                now = asyncio.get_running_loop().time()
                 if now - last_edit >= 0.8:
                     try:
                         await sent_msg.edit_text("".join(chunks))
@@ -1005,7 +1007,7 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
             print(f"Claude недоступен: {e_claude}")
 
     if answer is None:
-        await sent_msg.edit_text("Извините, серверы ИИ сейчас перегружены. Попробуйте через минуту.")
+        await sent_msg.edit_text("Вибачте, сервери ШІ зараз перевантажені. Спробуйте через хвилину.")
         return
 
     # Собираем ссылки на источники
@@ -1024,7 +1026,7 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
 
     if used_links:
         final_links = list(set(used_links))
-        answer += "\n\n*Ознакомиться с документами:*\n" + "\n".join(final_links)
+        answer += "\n\n*Ознайомитись з документами:*\n" + "\n".join(final_links)
 
     _uname = message.from_user.username or f"id{message.from_user.id}"
     log_to_db(message.from_user.id, _uname, mode_key, ai_used, text, answer, bool(used_links), _model_used, _tokens_in, _tokens_out)
@@ -1046,26 +1048,9 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
                 f"*Пропуск в базе знаний!*\n@{message.from_user.username} спросил:\n_{text}_"
             )
         except Exception as admin_err:
-            print(f"Ошибка уведомления админа: {admin_err}")
+            print(f"[log] помилка сповіщення адміна: {admin_err}")
 
     await send_paginated(message, state, answer, sent_msg=sent_msg)
-
-    # Після відповіді в режимі Certs — пропонуємо завантажити знайдені файли
-    if mode_key == "certs" and sources:
-        cert_files = []
-        for doc_id, data in sources.items():
-            file_id = data.get("file_id", "")
-            if file_id:
-                cert_files.append({"file_id": file_id, "name": data["name"]})
-        if cert_files:
-            await state.update_data(cert_files=cert_files)
-            builder = InlineKeyboardBuilder()
-            for idx, cf in enumerate(cert_files[:5]):  # max 5 кнопок
-                short_name = cf["name"][:35] + "…" if len(cf["name"]) > 35 else cf["name"]
-                builder.button(text=f"📥 {short_name}", callback_data=f"cert_dl_{idx}")
-            builder.button(text="🏠 Головне меню", callback_data="go_home")
-            builder.adjust(1)
-            await message.answer("Завантажити оригінальний файл:", reply_markup=builder.as_markup())
 
     # Після відповіді в режимі Coach — показуємо меню Coach знову
     if mode_key == "coach":
@@ -1098,7 +1083,7 @@ async def send_question(message: types.Message, questions: list, index: int):
         )
     builder.adjust(1)
 
-    question_text = f"*Вопрос {index + 1}/{total}*\n\n{q['text']}"
+    question_text = f"*Питання {index + 1}/{total}*\n\n{q['text']}"
     try:
         await message.answer(question_text, parse_mode="Markdown", reply_markup=builder.as_markup())
     except Exception:
@@ -1236,7 +1221,6 @@ async def handle_email_input(message: types.Message, state: FSMContext):
     email = message.text.strip().lower()
 
     # Базова перевірка формату email
-    import re
     if not re.match(r'^[^@\s]+@[^@\s]+\.[^@\s]+$', email):
         await message.answer("❌ Невірний формат пошти. Введіть email у форматі *name@company.ua*", parse_mode="Markdown")
         return
@@ -1326,13 +1310,13 @@ async def page_next_handler(callback: types.CallbackQuery, state: FSMContext):
 async def cmd_help(message: types.Message):
     help_text = (
         "*AI-асистент EMET*\n\n"
-        "*🔍 HR і регламенти*\n"
+        "*📋 HR і регламенти*\n"
         "Корпоративні правила, відпустки, структура компанії, документи.\n\n"
         "*💼 Sales Коуч*\n"
         "Препарати, склади, порівняння, скрипти продажів.\n"
         "Режими: вільний діалог, 🆘 SOS-підготовка, робота із запереченнями, сезонні скрипти.\n\n"
         "*🎓 Навчання і тести*\n"
-        "Курси по продуктах з уроками та тестами. Є звичайні та 🏆 сертифікаційні тести.\n"
+        "Курси з продуктів з уроками та тестами. Є звичайні та 🏆 сертифікаційні тести.\n"
         "Після тесту — AI-аналіз: сильні/слабкі сторони та рекомендації.\n\n"
         "*🔍 Розбір кейсів*\n"
         "Аналіз реальних ситуацій з клієнтами та лікарями.\n\n"
@@ -1457,15 +1441,15 @@ async def _ask_voice_confirm(message: types.Message, state: FSMContext, text: st
     await state.set_state(UserState.voice_confirm)
 
     builder = InlineKeyboardBuilder()
-    builder.button(text="✅ Верно, искать", callback_data="voice_confirm_yes")
-    builder.button(text="✏️ Задать иначе", callback_data="voice_confirm_no")
+    builder.button(text="✅ Вірно, шукати", callback_data="voice_confirm_yes")
+    builder.button(text="✏️ Уточнити запит", callback_data="voice_confirm_no")
     builder.adjust(2)
 
-    msg = "Ваш запрос:\n" + f"*{text}*" + "\n\nВсё верно?"
+    msg = "Ваш запит:\n" + f"*{text}*" + "\n\nВсе вірно?"
     try:
         await message.answer(msg, parse_mode="Markdown", reply_markup=builder.as_markup())
     except Exception:
-        await message.answer("Ваш запрос:\n" + text + "\n\nВсё верно?", reply_markup=builder.as_markup())
+        await message.answer("Ваш запит:\n" + text + "\n\nВсе вірно?", reply_markup=builder.as_markup())
 
 
 @dp.callback_query(F.data == "voice_confirm_yes", StateFilter(UserState.voice_confirm))
@@ -1482,7 +1466,7 @@ async def voice_rejected(callback: types.CallbackQuery, state: FSMContext):
     await callback.message.delete_reply_markup()
     await callback.answer()
     await state.set_state(UserState.mode_kb)
-    await callback.message.answer("Напишите ваш вопрос текстом.")
+    await callback.message.answer("Напишіть ваше запитання текстом.")
 
 
 # --- ГОЛОСОВЫЕ СООБЩЕНИЯ ---
@@ -1500,13 +1484,13 @@ async def handle_voice(message: types.Message, state: FSMContext):
         text = transcript.text.strip()
 
         if not text:
-            return await message.answer("Не удалось распознать голосовое сообщение. Попробуйте ещё раз.")
+            return await message.answer("Не вдалося розпізнати голосове повідомлення. Спробуйте ще раз.")
 
         await _ask_voice_confirm(message, state, text)
 
     except Exception as e:
-        print(f"Ошибка распознавания голоса: {e}")
-        await message.answer("Не удалось обработать голосовое сообщение.")
+        print(f"[log] помилка розпізнавання голосу: {e}")
+        await message.answer("Не вдалося обробити голосове повідомлення.")
 
 
 # --- ФОТО / СКРИНШОТЫ ---
@@ -1519,7 +1503,7 @@ async def handle_photo(message: types.Message, state: FSMContext):
         photo_bytes = await bot.download_file(file.file_path)
 
         img_b64 = base64.b64encode(photo_bytes.read()).decode()
-        caption = message.caption or "Опиши что на скриншоте и сформулируй вопрос для поиска в базе знаний компании."
+        caption = message.caption or "Опиши що на скріншоті і сформулюй запитання для пошуку в базі знань компанії."
 
         response = await client_openai.chat.completions.create(
             model="gpt-4o-mini",
@@ -1529,9 +1513,9 @@ async def handle_photo(message: types.Message, state: FSMContext):
                     {
                         "type": "text",
                         "text": (
-                            f"Пользователь прислал скриншот. Его вопрос/контекст: '{caption}'.\n"
-                            "Опиши что ты видишь на изображении и сформулируй один конкретный текстовый запрос "
-                            "для поиска ответа в корпоративной базе знаний. Только запрос, без лишних слов."
+                            f"Користувач надіслав скріншот. Його запитання/контекст: '{caption}'.\n"
+                            "Опиши що ти бачиш на зображенні і сформулюй один конкретний текстовий запит "
+                            "для пошуку відповіді в корпоративній базі знань. Тільки запит, без зайвих слів."
                         )
                     },
                     {
@@ -1547,15 +1531,15 @@ async def handle_photo(message: types.Message, state: FSMContext):
         await _ask_voice_confirm(message, state, extracted_query)
 
     except Exception as e:
-        print(f"Ошибка обработки фото: {e}")
-        await message.answer("Не удалось обработать изображение. Попробуйте описать вопрос текстом.")
+        print(f"[log] помилка обробки фото: {e}")
+        await message.answer("Не вдалося обробити зображення. Спробуйте описати запитання текстом.")
 
 
 # --- ПЕРЕКЛЮЧЕНИЕ РЕЖИМОВ ---
 @dp.callback_query(F.data == "set_kb")
 async def mode_kb(callback: types.CallbackQuery, state: FSMContext):
     await state.set_state(UserState.mode_kb)
-    await callback.message.answer("🔍 Режим: *База знаний*. Задайте вопрос по регламентам компании.", parse_mode="Markdown")
+    await callback.message.answer("📋 Режим: *База знань*. Задайте запитання по регламентах компанії.", parse_mode="Markdown")
     await callback.answer()
 
 
@@ -1753,7 +1737,7 @@ async def coach_seasonal(callback: types.CallbackQuery, state: FSMContext):
 @dp.callback_query(F.data == "go_home")
 async def go_home(callback: types.CallbackQuery, state: FSMContext):
     await state.set_state(UserState.mode_kb)
-    await callback.message.answer("Главное меню:", reply_markup=get_main_menu())
+    await callback.message.answer("Головне меню:", reply_markup=get_main_menu())
     await callback.answer()
 
 
@@ -1764,18 +1748,18 @@ async def show_courses(callback: types.CallbackQuery, state: FSMContext):
     courses = get_courses()
 
     if not courses:
-        await callback.message.answer("🎓 Курсов пока нет. Обратитесь к администратору.")
+        await callback.message.answer("🎓 Курсів поки немає. Зверніться до адміністратора.")
         await callback.answer()
         return
 
     builder = InlineKeyboardBuilder()
     for c_id, title, _ in courses:
         builder.button(text=f"📚 {title}", callback_data=f"lms_course_{c_id}")
-    builder.button(text="⬅️ Главное меню", callback_data="go_home")
+    builder.button(text="⬅️ Головне меню", callback_data="go_home")
     builder.adjust(1)
 
     await callback.message.answer(
-        "*🎓 Обучение ЭМЕТ*\n\nВыберите курс:",
+        "*🎓 Навчання EMET*\n\nОберіть курс:",
         parse_mode="Markdown",
         reply_markup=builder.as_markup()
     )
@@ -1801,16 +1785,16 @@ async def show_topics(callback: types.CallbackQuery, state: FSMContext):
         elif progress and is_cert and max_att and progress[2] >= max_att:
             label = f"🔒 {order_num}. {title} — вичерпано спроби"
         elif progress:
-            label = f"🔄 {order_num}. {title}"
+            label = f"🔄 {order_num}. {title} (розпочато)"
         else:
             label = f"{icon} {order_num}. {title}"
         builder.button(text=label, callback_data=f"lms_topic_{t_id}")
 
-    builder.button(text="⬅️ К курсам", callback_data="set_learn")
+    builder.button(text="⬅️ До курсів", callback_data="set_learn")
     builder.adjust(1)
 
     await callback.message.answer(
-        "*Темы курса:*\n\n✅ — пройдено  🔄 — начато  ⬜ — не начато",
+        "*Теми курсу:*\n\n✅ — пройдено  🔄 — розпочато  ⬜ — не розпочато",
         parse_mode="Markdown",
         reply_markup=builder.as_markup()
     )
@@ -1850,7 +1834,7 @@ async def show_lesson(callback: types.CallbackQuery, state: FSMContext):
             builder.button(text=f"📝 Скласти тест ({left} спроби залишилось)", callback_data=f"lms_starttest_{topic_id}")
     elif progress and progress[0]:
         builder.button(
-            text=f"✅ Пройдено ({progress[1]}%) — пройти знову",
+            text=f"✅ Складено ({progress[1]}%) — пройти знову",
             callback_data=f"lms_starttest_{topic_id}"
         )
     else:
@@ -1935,7 +1919,7 @@ async def handle_answer(callback: types.CallbackQuery, state: FSMContext):
     questions = data['lms_questions']
     q_index = data['lms_q_index']
     correct_count = data.get('lms_correct', 0)
-    wrong_answers = data.get('lms_wrong_answers', [])  # список неверных ответов
+    wrong_answers = data.get('lms_wrong_answers', [])
 
     await callback.answer()
 
@@ -2000,19 +1984,19 @@ async def handle_answer(callback: types.CallbackQuery, state: FSMContext):
         await send_question(callback.message, questions, next_index)
 
 
-# --- LMS: перехват текста во время теста ---
+# --- LMS: перехоплення тексту під час тесту ---
 @dp.message(StateFilter(UserState.lms_test_active))
 async def handle_text_in_test(message: types.Message):
     if message.text:
-        await message.answer("Выберите вариант ответа из кнопок выше.")
+        await message.answer("Оберіть варіант відповіді з кнопок вище.")
 
 
-# --- АДМИН: ЗАГРУЗКА КУРСА ЧЕРЕЗ JSON ---
+# --- АДМІН: ЗАВАНТАЖЕННЯ КУРСУ ЧЕРЕЗ JSON ---
 @dp.callback_query(F.data == "admin_upload")
 async def ask_json(callback: types.CallbackQuery, state: FSMContext):
     if callback.from_user.id != ADMIN_ID:
-        return await callback.answer("У вас нет прав администратора.", show_alert=True)
-    await callback.message.answer("Отправьте JSON-файл с обучающим курсом.")
+        return await callback.answer("⛔ У вас немає прав адміністратора.", show_alert=True)
+    await callback.message.answer("Надішліть JSON-файл з навчальним курсом.")
     await state.set_state(UserState.waiting_for_json)
 
 
@@ -2023,11 +2007,11 @@ async def process_json(message: types.Message, state: FSMContext):
     json_str = content.read().decode('utf-8')
     try:
         data = json.loads(json_str)
-        save_course(data.get('title', 'Без названия'), json_str)
-        await message.answer(f"✅ Курс '{data.get('title')}' загружен!")
+        save_course(data.get('title', 'Без назви'), json_str)
+        await message.answer(f"✅ Курс '{data.get('title')}' завантажено!")
         await state.set_state(UserState.mode_kb)
     except Exception as e:
-        await message.answer(f"❌ Ошибка валидации JSON: {e}")
+        await message.answer(f"❌ Помилка валідації JSON: {e}")
 
 
 # --- РЕЖИМ 4: РАЗБОР КЕЙСОВ ---
@@ -2215,7 +2199,7 @@ async def _send_profile(user, message):
         f"*Ім'я:* {name} ({username_str})\n"
         f"*Рівень:* {level}\n\n"
         f"📊 *Статистика тестів:*\n"
-        f"Пройдено тем: *{len(test_rows)}*\n"
+        f"Тем опрацьовано: *{len(test_rows)}*\n"
     )
     if test_rows:
         text += f"Середній бал: *{avg_score}%*\n"
@@ -2372,15 +2356,13 @@ async def auto_sync_task():
         loop = asyncio.get_running_loop()
         result = await loop.run_in_executor(None, sync_manager.run_sync)
 
-        # Если RAG обновился — сбрасываем синглтоны, чтобы следующий запрос загрузил новый индекс
+        # Если RAG обновился — сбрасываем VDB-синглтоны, чтобы следующий запрос загрузил новый индекс
         if result["rag_updated"]:
-            global _vdb_kb_openai, _vdb_coach_openai, _vdb_certs_openai, _vdb_kb_google, _vdb_coach_google, _vdb_certs_google
+            global _vdb_kb_openai, _vdb_coach_openai, _vdb_kb_google, _vdb_coach_google
             _vdb_kb_openai = None
             _vdb_coach_openai = None
-            _vdb_certs_openai = None
             _vdb_kb_google = None
             _vdb_coach_google = None
-            _vdb_certs_google = None
             cat_labels = {"kb": "📚 База знань", "coach": "💼 Коуч", "certs": "📜 Сертифікати"}
             by_cat = result.get("rag_by_category", {})
             lines = [f"{cat_labels.get(k, k)}: {v} файл(ів)" for k, v in by_cat.items()]
@@ -2404,7 +2386,7 @@ async def auto_sync_task():
 
         if result["error"]:
             try:
-                await bot.send_message(ADMIN_ID, f"Ошибка синхронизации: {result['error']}")
+                await bot.send_message(ADMIN_ID, f"⚠️ Помилка синхронізації: {result['error']}")
             except Exception:
                 pass
 

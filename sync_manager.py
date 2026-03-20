@@ -53,14 +53,17 @@ SCOPES = [
 
 # Папки Google Drive → пути индексов + размер чанка
 # label используется как суффикс в имени папки индекса: db_index_{label}_{provider}
+# Примітка: certs навмисно виключені — пошук по сертифікатах йде через SQL (sync_state),
+# бо PDF-файли сертифікатів скановані; RAG-індекс для них марний.
 RAG_FOLDERS = {
     "kb_openai":    {"folder_id": "1RBXHGXOIc2kkSAw-LqzLaRqEE3Ix7L-m", "db": "data/db_index_kb_openai",    "chunk_size": 800,  "overlap": 150, "provider": "openai"},
     "kb_google":    {"folder_id": "1RBXHGXOIc2kkSAw-LqzLaRqEE3Ix7L-m", "db": "data/db_index_kb_google",    "chunk_size": 800,  "overlap": 150, "provider": "google"},
     "coach_openai": {"folder_id": "1KPPBurEoCV_wWzY5HxEtv_TrMI4qXfPa",  "db": "data/db_index_coach_openai", "chunk_size": 1500, "overlap": 200, "provider": "openai"},
     "coach_google": {"folder_id": "1KPPBurEoCV_wWzY5HxEtv_TrMI4qXfPa",  "db": "data/db_index_coach_google", "chunk_size": 1500, "overlap": 200, "provider": "google"},
-    "certs_openai": {"folder_id": "1ma-6CNO2FeHaicbRag7RvStkf5Rp1MyJ",  "db": "data/db_index_certs_openai", "chunk_size": 800,  "overlap": 100, "provider": "openai"},
-    "certs_google": {"folder_id": "1ma-6CNO2FeHaicbRag7RvStkf5Rp1MyJ",  "db": "data/db_index_certs_google", "chunk_size": 800,  "overlap": 100, "provider": "google"},
 }
+
+# Папка сертифікатів — тільки для sync_state (SQL-пошук по іменах файлів)
+CERTS_FOLDER_ID = "1ma-6CNO2FeHaicbRag7RvStkf5Rp1MyJ"
 
 # ─── Авторизация ──────────────────────────────────────────────────────────────
 
@@ -239,13 +242,18 @@ def sync_rag_indexes():
     """
     Перевіряє зміни в кожній RAG-папці окремо.
     Пересобирає тільки ті індекси, де є зміни (атомарний swap).
-    Повертає список імен змінених файлів.
+    Для certs — тільки оновлює sync_state (SQL-пошук), без побудови RAG-індексу.
+    Повертає (all_changed_names, changed_by_category).
     """
     drive, _ = get_services()
 
     # Поточний стан БД
     indexed = {r[0]: r[1] for r in db.query("SELECT file_id, modified_time FROM sync_state")}
 
+    all_changed_names = []
+    changed_by_category = {}  # {"kb": 5, "coach": 3, "certs": 2}
+
+    # ── 1. RAG-індекси (kb + coach) ──────────────────────────────────────────
     # Групуємо конфіги по folder_id щоб не сканувати одну папку двічі
     by_folder = {}
     for label, cfg in RAG_FOLDERS.items():
@@ -253,9 +261,6 @@ def sync_rag_indexes():
         if fid not in by_folder:
             by_folder[fid] = {"files": None, "labels": []}
         by_folder[fid]["labels"].append(label)
-
-    all_changed_names = []
-    changed_by_category = {}  # {"kb": 5, "coach": 3, "certs": 2}
 
     for folder_id, info in by_folder.items():
         files = list_files_with_meta(drive, folder_id)
@@ -266,7 +271,7 @@ def sync_rag_indexes():
             print(f"RAG sync: немає змін у папці {folder_id} ({len(files)} файлів)")
             continue
 
-        folder_label = info["labels"][0].split("_")[0]  # "kb", "coach", "certs"
+        folder_label = info["labels"][0].split("_")[0]  # "kb", "coach"
         print(f"RAG sync: {len(changed)} змін у [{folder_label}]. Перебудовую індекси...")
 
         for label in info["labels"]:
@@ -287,7 +292,7 @@ def sync_rag_indexes():
                 print(f"  [{label}] помилка побудови: {e}")
                 shutil.rmtree(tmp_dir, ignore_errors=True)
 
-        # Оновлюємо sync_state (з folder_label для фільтрації)
+        # Оновлюємо sync_state
         db.executemany(
             "INSERT INTO sync_state (file_id, file_name, modified_time, indexed_at, folder_label) VALUES (%s,%s,%s,%s,%s) "
             "ON CONFLICT (file_id) DO UPDATE SET file_name=EXCLUDED.file_name, "
@@ -296,6 +301,23 @@ def sync_rag_indexes():
         )
         all_changed_names.extend(f["name"] for f in changed)
         changed_by_category[folder_label] = len(changed)
+
+    # ── 2. Certs — тільки sync_state, без RAG-індексу ────────────────────────
+    if CERTS_FOLDER_ID:
+        certs_files = list_files_with_meta(drive, CERTS_FOLDER_ID)
+        certs_changed = [f for f in certs_files if indexed.get(f["id"]) != f["modifiedTime"]]
+        if certs_changed:
+            print(f"Certs sync: {len(certs_changed)} змін. Оновлюю sync_state...")
+            db.executemany(
+                "INSERT INTO sync_state (file_id, file_name, modified_time, indexed_at, folder_label) VALUES (%s,%s,%s,%s,%s) "
+                "ON CONFLICT (file_id) DO UPDATE SET file_name=EXCLUDED.file_name, "
+                "modified_time=EXCLUDED.modified_time, indexed_at=EXCLUDED.indexed_at, folder_label=EXCLUDED.folder_label",
+                [(f["id"], f["name"], f["modifiedTime"], datetime.now().isoformat(), "certs") for f in certs_files]
+            )
+            all_changed_names.extend(f["name"] for f in certs_changed)
+            changed_by_category["certs"] = len(certs_changed)
+        else:
+            print(f"Certs sync: немає змін ({len(certs_files)} файлів)")
 
     if all_changed_names:
         print(f"RAG sync завершено. Змінено: {all_changed_names}")
