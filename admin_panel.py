@@ -9,6 +9,7 @@ import os
 import io
 import json
 import db
+import time
 import tempfile
 import threading
 from datetime import datetime, date, timedelta
@@ -51,7 +52,62 @@ def _digest_scheduler():
 
 
 threading.Thread(target=_digest_scheduler, daemon=True, name="digest-scheduler").start()
+
 app.secret_key = SECRET_KEY
+app.config.update(
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE="Lax",
+    PERMANENT_SESSION_LIFETIME=timedelta(hours=8),
+)
+
+# ─── Security headers ──────────────────────────────────────────────────────────
+
+@app.after_request
+def set_security_headers(response):
+    response.headers["X-Frame-Options"] = "DENY"
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-XSS-Protection"] = "1; mode=block"
+    response.headers["Referrer-Policy"] = "no-referrer"
+    response.headers["Content-Security-Policy"] = (
+        "default-src 'self'; "
+        "script-src 'self' 'unsafe-inline' cdn.jsdelivr.net cdnjs.cloudflare.com; "
+        "style-src 'self' 'unsafe-inline' cdn.jsdelivr.net cdnjs.cloudflare.com; "
+        "img-src 'self' data:; "
+        "font-src 'self' cdnjs.cloudflare.com;"
+    )
+    return response
+
+# ─── Brute-force protection ────────────────────────────────────────────────────
+
+_login_attempts: dict[str, dict] = {}  # ip → {count, locked_until}
+LOGIN_MAX_ATTEMPTS = 5
+LOGIN_LOCKOUT_SEC  = 300  # 5 хвилин
+
+
+def _get_client_ip() -> str:
+    return request.headers.get("X-Forwarded-For", request.remote_addr or "unknown").split(",")[0].strip()
+
+
+def _is_locked(ip: str) -> tuple[bool, int]:
+    """Повертає (locked, seconds_left)."""
+    entry = _login_attempts.get(ip)
+    if not entry:
+        return False, 0
+    if entry.get("locked_until", 0) > time.monotonic():
+        return True, int(entry["locked_until"] - time.monotonic())
+    return False, 0
+
+
+def _record_failed(ip: str):
+    entry = _login_attempts.setdefault(ip, {"count": 0, "locked_until": 0})
+    entry["count"] += 1
+    if entry["count"] >= LOGIN_MAX_ATTEMPTS:
+        entry["locked_until"] = time.monotonic() + LOGIN_LOCKOUT_SEC
+        entry["count"] = 0
+
+
+def _reset_attempts(ip: str):
+    _login_attempts.pop(ip, None)
 
 # ─── Auth ──────────────────────────────────────────────────────────────────────
 
@@ -341,11 +397,23 @@ def render_page(content_html, active=""):
 @app.route("/login", methods=["GET", "POST"])
 def login():
     error = None
+    ip = _get_client_ip()
+    locked, secs_left = _is_locked(ip)
+    if locked:
+        error = f"Забагато невдалих спроб. Спробуйте через {secs_left} сек."
+        return render_template_string(LOGIN_HTML, error=error)
     if request.method == "POST":
         if request.form.get("password") == ADMIN_PASSWORD:
+            _reset_attempts(ip)
             session["logged_in"] = True
+            session.permanent = True
             return redirect(url_for("dashboard"))
-        error = "Неверный пароль"
+        _record_failed(ip)
+        _, secs_left = _is_locked(ip)
+        if secs_left:
+            error = f"Забагато невдалих спроб. Заблоковано на {secs_left} сек."
+        else:
+            error = "Невірний пароль"
     return render_template_string(LOGIN_HTML, error=error)
 
 
