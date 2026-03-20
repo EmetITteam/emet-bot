@@ -27,6 +27,7 @@ services:
       - .env
     environment:
       - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      - TZ=Europe/Kiev
     volumes:
       - ./data:/app/data
       - ./credentials.json:/app/credentials.json
@@ -49,6 +50,7 @@ services:
       - .env
     environment:
       - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
+      - TZ=Europe/Kiev
     ports:
       - "127.0.0.1:5000:5000"
     depends_on:

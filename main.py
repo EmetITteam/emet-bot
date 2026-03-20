@@ -8,6 +8,9 @@ import random
 import time
 from collections import deque
 from datetime import datetime
+from zoneinfo import ZoneInfo
+
+_TZ_KIEV = ZoneInfo("Europe/Kiev")
 import sync_manager
 from openai import AsyncOpenAI
 from google import genai
@@ -513,7 +516,7 @@ def log_to_db(user_id, username, mode, ai_engine, question, answer, has_source, 
     try:
         db.execute(
             "INSERT INTO logs (date, user_id, username, mode, ai_engine, question, answer, found_in_db, model, tokens_in, tokens_out) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
-            (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), user_id, username,
+            (datetime.now(_TZ_KIEV).strftime("%Y-%m-%d %H:%M:%S"), user_id, username,
              mode, ai_engine, question, answer, 1 if has_source else 0, model, tokens_in, tokens_out)
         )
     except Exception as e:
@@ -1024,12 +1027,23 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
                 f"[СИСТЕМА: продукт — {_canonical}. Дай скрипт-діалог менеджера з лікарем.]\n\n"
                 f"ПИТАННЯ:\n{text}"
             )
-    elif mode_key == "coach" and _is_coach_followup and _canonical:
+    elif mode_key == "coach" and _is_coach_followup:
         # Продовження тренінгу — "інші аргументи", "розпиши детально"
+        # Визначаємо що вже відкинув лікар (щоб не повторювати)
+        _t_lower_fu = text.lower()
+        _avoid_hint = ""
+        for _neg_marker in ["не интересует", "не цікавить", "не важно", "не важливо", "не актуально", "не актуальн"]:
+            if _neg_marker in _t_lower_fu:
+                _avoid_hint = "Уникай аргументів, які менеджер чи лікар вже відкинув або назвав неактуальними. "
+                break
+        _prod_ctx = f"продукт — {_canonical}. " if _canonical else ""
+        _obj_ctx = f"Заперечення в контексті: «{_history_objection}». " if _history_objection else ""
         llm_user_text = (
-            f"[СИСТЕМА: продукт — {_canonical}. Продовжуй тренінг. "
-            f"Дай конкретні аргументи/фрази/варіанти відповідей по {_canonical}. "
-            f"НЕ починай з нуля — відповідай як продовження розмови.]\n\n"
+            f"[СИСТЕМА: {_prod_ctx}{_obj_ctx}"
+            f"Дай 3-5 НОВИХ конкретних аргументів або готових фраз менеджера. "
+            f"{_avoid_hint}"
+            f"ФОРМАТ: тільки готові фрази/аргументи — БЕЗ нумерованих секцій (1️⃣2️⃣3️⃣), БЕЗ повного 7-секційного розбору. "
+            f"Максимум 8 рядків. НЕ починай з нуля.]\n\n"
             f"ПИТАННЯ:\n{text}"
         )
     else:
