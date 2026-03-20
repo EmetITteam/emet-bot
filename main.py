@@ -8,9 +8,6 @@ import random
 import time
 from collections import deque
 from datetime import datetime
-from zoneinfo import ZoneInfo
-
-_TZ_KIEV = ZoneInfo("Europe/Kiev")
 import sync_manager
 from openai import AsyncOpenAI
 from google import genai
@@ -516,7 +513,7 @@ def log_to_db(user_id, username, mode, ai_engine, question, answer, has_source, 
     try:
         db.execute(
             "INSERT INTO logs (date, user_id, username, mode, ai_engine, question, answer, found_in_db, model, tokens_in, tokens_out) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
-            (datetime.now(_TZ_KIEV).strftime("%Y-%m-%d %H:%M:%S"), user_id, username,
+            (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), user_id, username,
              mode, ai_engine, question, answer, 1 if has_source else 0, model, tokens_in, tokens_out)
         )
     except Exception as e:
