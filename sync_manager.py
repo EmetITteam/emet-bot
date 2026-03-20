@@ -287,12 +287,12 @@ def sync_rag_indexes():
                 print(f"  [{label}] помилка побудови: {e}")
                 shutil.rmtree(tmp_dir, ignore_errors=True)
 
-        # Оновлюємо sync_state
+        # Оновлюємо sync_state (з folder_label для фільтрації)
         db.executemany(
-            "INSERT INTO sync_state (file_id, file_name, modified_time, indexed_at) VALUES (%s,%s,%s,%s) "
+            "INSERT INTO sync_state (file_id, file_name, modified_time, indexed_at, folder_label) VALUES (%s,%s,%s,%s,%s) "
             "ON CONFLICT (file_id) DO UPDATE SET file_name=EXCLUDED.file_name, "
-            "modified_time=EXCLUDED.modified_time, indexed_at=EXCLUDED.indexed_at",
-            [(f["id"], f["name"], f["modifiedTime"], datetime.now().isoformat()) for f in files]
+            "modified_time=EXCLUDED.modified_time, indexed_at=EXCLUDED.indexed_at, folder_label=EXCLUDED.folder_label",
+            [(f["id"], f["name"], f["modifiedTime"], datetime.now().isoformat(), folder_label) for f in files]
         )
         all_changed_names.extend(f["name"] for f in changed)
         changed_by_category[folder_label] = len(changed)

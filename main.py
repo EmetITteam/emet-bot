@@ -32,6 +32,28 @@ GEMINI_KEY = os.getenv("GEMINI_API_KEY")
 ANTHROPIC_KEY = os.getenv("ANTHROPIC_API_KEY")
 ADMIN_ID = int(os.getenv("ADMIN_ID", "0"))
 
+# --- БРЕНД-СЛОВНИК ДЛЯ ПОШУКУ СЕРТИФІКАТІВ ---
+BRAND_SYNONYMS = {
+    "витаран": "Vitaran", "вітаран": "Vitaran", "vitaran": "Vitaran",
+    "еллансе": "Ellanse", "елансе": "Ellanse", "элансе": "Ellanse", "эллансе": "Ellanse", "ellanse": "Ellanse",
+    "нейраміс": "Neuramis", "нейрамис": "Neuramis", "neuramis": "Neuramis",
+    "петаран": "Petaran", "petaran": "Petaran",
+    "нейронокс": "Neuronox", "neuronox": "Neuronox",
+    "ессе": "ESSE", "эссе": "ESSE", "esse": "ESSE",
+    "іюз": "IUSE", "июз": "IUSE", "iuse": "IUSE",
+    "ексокс": "EXOXE", "екзокс": "EXOXE", "экзокс": "EXOXE", "exoxe": "EXOXE",
+    "скін бустер": "SkinBooster", "skin booster": "SkinBooster", "skinbooster": "SkinBooster",
+    "magnox": "Magnox", "магнокс": "Magnox",
+}
+
+def detect_brand(query: str) -> str:
+    """Витягує канонічну назву бренду з запиту користувача."""
+    q = query.lower()
+    for keyword, brand in BRAND_SYNONYMS.items():
+        if keyword in q:
+            return brand
+    return ""
+
 # --- ROLES & WHITELIST (з БД) ---
 # Ролі: admin, manager, operator
 # Якщо в таблиці users немає жодного запису → відкритий доступ (режим розробки)
@@ -184,6 +206,7 @@ def init_db():
                 (file_id TEXT PRIMARY KEY, file_name TEXT, modified_time TEXT, indexed_at TEXT,
                  uploaded_by TEXT, deleted_by TEXT, deleted_at TEXT)''')
             cur.execute("ALTER TABLE sync_state ADD COLUMN IF NOT EXISTS uploaded_by TEXT")
+            cur.execute("ALTER TABLE sync_state ADD COLUMN IF NOT EXISTS folder_label TEXT DEFAULT ''")
             cur.execute("ALTER TABLE sync_state ADD COLUMN IF NOT EXISTS deleted_by TEXT")
             cur.execute("ALTER TABLE sync_state ADD COLUMN IF NOT EXISTS deleted_at TEXT")
 
@@ -774,6 +797,38 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
         "certs":       UserState.mode_certs,
     }
     await state.set_state(state_map.get(mode_key, UserState.mode_kb))
+
+    # --- Certs: прямий SQL-пошук по назвах файлів (без RAG) ---
+    if mode_key == "certs":
+        brand = detect_brand(text)
+        if brand:
+            rows = db.query_dict(
+                "SELECT file_name, file_id FROM sync_state WHERE folder_label = 'certs' AND LOWER(file_name) LIKE %s ORDER BY file_name",
+                (f"%%{brand.lower()}%%",)
+            )
+        else:
+            rows = db.query_dict(
+                "SELECT file_name, file_id FROM sync_state WHERE folder_label = 'certs' ORDER BY file_name LIMIT 30"
+            )
+        if not rows:
+            label = f"*{brand}*" if brand else "вашим запитом"
+            await message.answer(f"Документів по {label} не знайдено в базі сертифікатів.")
+        else:
+            cert_files = [{"file_id": r["file_id"], "name": r["file_name"]} for r in rows if r.get("file_id")]
+            await state.update_data(cert_files=cert_files)
+            builder = InlineKeyboardBuilder()
+            for idx, cf in enumerate(cert_files[:8]):
+                short_name = cf["name"][:40] + "…" if len(cf["name"]) > 40 else cf["name"]
+                builder.button(text=f"📥 {short_name}", callback_data=f"cert_dl_{idx}")
+            builder.button(text="🏠 Головне меню", callback_data="go_home")
+            builder.adjust(1)
+            label = brand if brand else "запитом"
+            await message.answer(
+                f"Знайдено {len(cert_files)} документ(ів) по *{label}*:",
+                parse_mode="Markdown",
+                reply_markup=builder.as_markup()
+            )
+        return
 
     search_query = await prepare_search_query(text)
 
