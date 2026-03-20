@@ -57,6 +57,7 @@ app.secret_key = SECRET_KEY
 app.config.update(
     SESSION_COOKIE_HTTPONLY=True,
     SESSION_COOKIE_SAMESITE="Lax",
+    SESSION_COOKIE_SECURE=os.getenv("HTTPS_ENABLED", "false").lower() == "true",
     PERMANENT_SESSION_LIFETIME=timedelta(hours=8),
 )
 
