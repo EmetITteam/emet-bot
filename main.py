@@ -625,7 +625,7 @@ def _extract_docs(docs):
     grouped_docs = {}
 
     for doc in docs:
-        name = doc.metadata.get("source", "Неизвестный документ")
+        name = doc.metadata.get("source", "Невідомий документ")
         url = doc.metadata.get("url", "")
         file_id = doc.metadata.get("file_id", "")
         content = doc.page_content
@@ -1826,9 +1826,21 @@ async def show_topics(callback: types.CallbackQuery, state: FSMContext):
     topics = get_topics(course_id)
     user_id = callback.from_user.id
 
+    # Один batch-запит замість N окремих get_user_progress
+    topic_ids = [t[0] for t in topics]
+    progress_map = {}
+    if topic_ids:
+        placeholders = ",".join(["%s"] * len(topic_ids))
+        rows = db.query(
+            f"SELECT topic_id, passed, score, attempts FROM user_progress "
+            f"WHERE user_id=%s AND topic_id IN ({placeholders})",
+            (str(user_id), *topic_ids)
+        )
+        progress_map = {r[0]: (r[1], r[2], r[3]) for r in rows}
+
     builder = InlineKeyboardBuilder()
     for t_id, order_num, title, is_cert, max_att in topics:
-        progress = get_user_progress(user_id, t_id)
+        progress = progress_map.get(t_id)
         icon = "🏆" if is_cert else "⬜"
         if progress and progress[0]:
             icon = "✅"
