@@ -19,6 +19,7 @@ from flask import (
     Flask, render_template_string, request, redirect,
     url_for, session, flash, jsonify, send_file
 )
+from markupsafe import escape as html_escape
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -593,14 +594,15 @@ def _build_trash_html(trash: list) -> str:
         del_at  = str(r.get("deleted_at") or "")[:16]
         fname   = r.get("file_name", "")
         rid     = r["id"]
+        safe_fname = html_escape(fname)
         rows += (
             f"<tr>"
-            f"<td>{fname}</td>"
+            f"<td>{safe_fname}</td>"
             f"<td class='text-muted'>{del_by}</td>"
             f"<td class='text-muted'>{del_at}</td>"
             f"<td><span style='color:{color};font-weight:600'>{days} дн.</span></td>"
             f"<td><a href='/knowledge/restore/{rid}' class='btn btn-success btn-sm' "
-            f"onclick='return confirm(\"Відновити {fname}?\")'>↩ Відновити</a></td>"
+            f"onclick='return confirm({json.dumps(f\"Відновити {fname}?\")})'>↩ Відновити</a></td>"
             f"</tr>"
         )
     return f"""
@@ -647,12 +649,13 @@ def knowledge():
         badge  = f"<span class='badge badge-{source}'>{source}</span>"
         uploader = f.get("uploaded_by") or ("Google Drive" if source == "drive" else "—")
         fn = f.get("file_name", "")
+        safe_fn = html_escape(fn)
         delete_btn = (
             f"<a href='/knowledge/delete/{fid}' class='btn btn-danger btn-sm' "
-            f"onclick='return confirm(\"Видалити {fn} з бази знань?\")'>🗑 Видалити</a>"
+            f"onclick='return confirm({json.dumps(f\"Видалити {fn} з бази знань?\")})'>🗑 Видалити</a>"
         )
         files_html += (
-            f"<tr><td>{f.get('file_name','')}</td>"
+            f"<tr><td>{safe_fn}</td>"
             f"<td>{badge}</td>"
             f"<td class='text-muted'>{uploader}</td>"
             f"<td class='text-muted'>{(f.get('indexed_at') or '')[:16]}</td>"
@@ -1074,17 +1077,18 @@ def access():
         role_badge = f"<span class='badge' style='background:{role_style}'>{r.get('role','')}</span>"
         act_date = str(r.get("activated_at") or "")[:16] or "—"
         em  = r.get('email', '')
+        safe_em = html_escape(em)
         rid = r['id']
         rows_html += (
             f"<tr>"
-            f"<td>{em}</td>"
+            f"<td>{safe_em}</td>"
             f"<td>{role_badge}</td>"
             f"<td>{r.get('full_name') or '—'}</td>"
             f"<td>{status_cell}</td>"
             f"<td class='text-muted'>{activated or '—'}</td>"
             f"<td class='text-muted'>{act_date}</td>"
             f"<td><a href='/access/delete/{rid}' class='btn btn-danger btn-sm' "
-            f"onclick='return confirm(\"Видалити {em}?\")'>✕</a></td>"
+            f"onclick='return confirm({json.dumps(f\"Видалити {em}?\")})'>✕</a></td>"
             f"</tr>"
         )
     if not rows_html:

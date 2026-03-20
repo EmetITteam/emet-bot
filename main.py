@@ -712,6 +712,7 @@ async def detect_intent(query: str) -> str:
     try:
         response = await client_openai.chat.completions.create(
             model="gpt-4o-mini",
+            timeout=15,
             messages=[{"role": "system", "content": (
                 "Ты — маршрутизатор запросов EMET. Классифицируй запрос ОДНИМ словом.\n"
                 "Работает на любом языке (UA/RU).\n\n"
@@ -740,6 +741,7 @@ async def prepare_search_query(user_query: str) -> str:
     try:
         response = await client_openai.chat.completions.create(
             model="gpt-4o-mini",
+            timeout=15,
             messages=[{
                 "role": "system",
                 "content": "Переведи запрос пользователя на украинский и русский языки, добавь 2-3 синонима. "
@@ -755,8 +757,17 @@ async def prepare_search_query(user_query: str) -> str:
 
 
 # --- 7. ЯДРО RAG (выделено в отдельную функцию для переиспользования) ---
+MAX_QUERY_LEN = 5000
+
 async def process_text_query(text: str, message: types.Message, state: FSMContext):
     """Основная RAG-логика. Принимает text явно (для голоса/фото/текста)."""
+    if not check_rate_limit(message.from_user.id):
+        await message.answer("⏳ Забагато запитів. Зачекайте хвилину і спробуйте знову.")
+        return
+    if len(text) > MAX_QUERY_LEN:
+        await message.answer(f"⚠️ Запит завеликий (максимум {MAX_QUERY_LEN} символів). Скоротіть, будь ласка.")
+        return
+
     t = text.lower().strip()
 
     greetings = ["привет", "здравствуйте", "добрый день", "привіт", "добрий день"]
@@ -958,42 +969,48 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
     # Отправляем placeholder — пользователь сразу видит что бот думает
     sent_msg = await message.answer("⏳")
 
-    try:
-        loop = asyncio.get_running_loop()
-        _model = MODEL_OPENAI_COACH if mode_key in ("coach", "combo") else MODEL_OPENAI
-        context, sources = await loop.run_in_executor(None, get_context, search_query, mode_key, "openai")
-        if not context.strip():
-            _context_was_empty = True
-        stream = await client_openai.chat.completions.create(
-            model=_model,
-            messages=[
-                {"role": "system", "content": SYSTEM_PROMPTS[mode_key]},
-                *chat_history,
-                {"role": "user", "content": f"КОНТЕКСТ:\n{context}\n\nВОПРОС:\n{llm_user_text}"}
-            ],
-            stream=True,
-            stream_options={"include_usage": True},
-        )
-        chunks = []
-        last_edit = asyncio.get_running_loop().time()
-        async for chunk in stream:
-            delta = chunk.choices[0].delta.content if chunk.choices else None
-            if delta:
-                chunks.append(delta)
-                now = asyncio.get_running_loop().time()
-                if now - last_edit >= 0.8:
-                    try:
-                        await sent_msg.edit_text("".join(chunks))
-                    except Exception:
-                        pass
-                    last_edit = now
-            if chunk.usage:
-                _tokens_in = chunk.usage.prompt_tokens
-                _tokens_out = chunk.usage.completion_tokens
-        answer = "".join(chunks)
-        _model_used = _model
-    except Exception as e_openai:
-        print(f"OpenAI недоступен: {e_openai}")
+    _openai_attempts = 0
+    while _openai_attempts < 2 and answer is None:
+        _openai_attempts += 1
+        try:
+            loop = asyncio.get_running_loop()
+            _model = MODEL_OPENAI_COACH if mode_key in ("coach", "combo") else MODEL_OPENAI
+            context, sources = await loop.run_in_executor(None, get_context, search_query, mode_key, "openai")
+            if not context.strip():
+                _context_was_empty = True
+            stream = await client_openai.chat.completions.create(
+                model=_model,
+                timeout=60,
+                messages=[
+                    {"role": "system", "content": SYSTEM_PROMPTS[mode_key]},
+                    *chat_history,
+                    {"role": "user", "content": f"КОНТЕКСТ:\n{context}\n\nВОПРОС:\n{llm_user_text}"}
+                ],
+                stream=True,
+                stream_options={"include_usage": True},
+            )
+            chunks = []
+            last_edit = asyncio.get_running_loop().time()
+            async for chunk in stream:
+                delta = chunk.choices[0].delta.content if chunk.choices else None
+                if delta:
+                    chunks.append(delta)
+                    now = asyncio.get_running_loop().time()
+                    if now - last_edit >= 0.8:
+                        try:
+                            await sent_msg.edit_text("".join(chunks))
+                        except Exception:
+                            pass
+                        last_edit = now
+                if chunk.usage:
+                    _tokens_in = chunk.usage.prompt_tokens
+                    _tokens_out = chunk.usage.completion_tokens
+            answer = "".join(chunks)
+            _model_used = _model
+        except Exception as e_openai:
+            print(f"OpenAI спроба {_openai_attempts}: {e_openai}")
+            if _openai_attempts < 2:
+                await asyncio.sleep(1)
 
     if answer is None:
         ai_used = "Google"
@@ -1006,7 +1023,11 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
                 role = "Менеджер" if msg["role"] == "user" else "Коуч"
                 history_text += f"{role}: {msg['content']}\n"
             prompt = f"{SYSTEM_PROMPTS[mode_key]}\n\n{history_text}КОНТЕКСТ:\n{context}\n\nВОПРОС:\n{llm_user_text}"
-            res = client_google.models.generate_content(model=MODEL_GOOGLE, contents=prompt)
+            res = await loop.run_in_executor(
+                None,
+                lambda: client_google.models.generate_content(model=MODEL_GOOGLE, contents=prompt,
+                                                               config={"timeout": 60})
+            )
             answer = res.text
             if hasattr(res, "usage_metadata") and res.usage_metadata:
                 _tokens_in = getattr(res.usage_metadata, "prompt_token_count", 0) or 0
@@ -1023,6 +1044,7 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
             claude_msg = await client_claude.messages.create(
                 model=MODEL_CLAUDE,
                 max_tokens=1024,
+                timeout=60,
                 system=SYSTEM_PROMPTS[mode_key],
                 messages=[
                     *chat_history,
@@ -1193,6 +1215,7 @@ async def send_test_analysis(message: types.Message, wrong_answers: list, score_
         )
         response = await client_openai.chat.completions.create(
             model=MODEL_OPENAI,
+            timeout=30,
             messages=[{"role": "user", "content": prompt}],
             max_tokens=400,
             temperature=0.4,
@@ -1515,9 +1538,6 @@ async def handle_voice(message: types.Message, state: FSMContext):
     if not is_allowed(message.from_user.id):
         await message.answer("⛔ Доступ заборонено. Зверніться до адміністратора EMET.")
         return
-    if not check_rate_limit(message.from_user.id):
-        await message.answer("⏳ Забагато запитів. Зачекайте хвилину і спробуйте знову.")
-        return
     await bot.send_chat_action(message.chat.id, "typing")
     try:
         file = await bot.get_file(message.voice.file_id)
@@ -1525,6 +1545,7 @@ async def handle_voice(message: types.Message, state: FSMContext):
 
         transcript = await client_openai.audio.transcriptions.create(
             model="whisper-1",
+            timeout=60,
             file=("voice.ogg", voice_bytes.read(), "audio/ogg"),
         )
         text = transcript.text.strip()
@@ -1544,9 +1565,6 @@ async def handle_voice(message: types.Message, state: FSMContext):
 async def handle_photo(message: types.Message, state: FSMContext):
     if not is_allowed(message.from_user.id):
         await message.answer("⛔ Доступ заборонено. Зверніться до адміністратора EMET.")
-        return
-    if not check_rate_limit(message.from_user.id):
-        await message.answer("⏳ Забагато запитів. Зачекайте хвилину і спробуйте знову.")
         return
     await bot.send_chat_action(message.chat.id, "typing")
     try:
@@ -1576,7 +1594,8 @@ async def handle_photo(message: types.Message, state: FSMContext):
                     }
                 ]
             }],
-            max_tokens=150
+            max_tokens=150,
+            timeout=30,
         )
 
         extracted_query = response.choices[0].message.content.strip()
@@ -2306,9 +2325,6 @@ async def handle_message(message: types.Message, state: FSMContext):
         return
     if not is_allowed(message.from_user.id):
         await message.answer("⛔ Доступ заборонено. Зверніться до адміністратора EMET.")
-        return
-    if not check_rate_limit(message.from_user.id):
-        await message.answer("⏳ Забагато запитів. Зачекайте хвилину і спробуйте знову.")
         return
     await process_text_query(message.text, message, state)
 

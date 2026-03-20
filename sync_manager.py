@@ -160,12 +160,16 @@ def extract_text(drive, file):
     return text
 
 
+MAX_FILE_BYTES = 50 * 1024 * 1024  # 50 MB
+
 def _download_bytes(drive, file_id) -> io.BytesIO:
     buf = io.BytesIO()
     dl = MediaIoBaseDownload(buf, drive.files().get_media(fileId=file_id))
     done = False
     while not done:
         _, done = dl.next_chunk()
+        if buf.tell() > MAX_FILE_BYTES:
+            raise ValueError(f"Файл {file_id} перевищує ліміт {MAX_FILE_BYTES // 1024 // 1024} МБ, пропускаємо.")
     buf.seek(0)
     return buf
 
