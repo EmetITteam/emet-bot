@@ -5,6 +5,8 @@ import json
 import db
 import base64
 import random
+import time
+from collections import deque
 from datetime import datetime
 import sync_manager
 from openai import AsyncOpenAI
@@ -82,6 +84,24 @@ def get_user_role(user_id: int) -> str:
 
 def is_admin(user_id: int) -> bool:
     return user_id == ADMIN_ID or get_user_role(user_id) == "admin"
+
+# --- RATE LIMITER (sliding window, in-memory) ---
+_rate_buckets: dict[int, deque] = {}
+RATE_LIMIT_MAX = 10     # max requests per window per user
+RATE_LIMIT_WINDOW = 60  # seconds
+
+def check_rate_limit(user_id: int) -> bool:
+    """Повертає True якщо запит дозволений, False — якщо ліміт вичерпано."""
+    now = time.monotonic()
+    if user_id not in _rate_buckets:
+        _rate_buckets[user_id] = deque()
+    dq = _rate_buckets[user_id]
+    while dq and now - dq[0] > RATE_LIMIT_WINDOW:
+        dq.popleft()
+    if len(dq) >= RATE_LIMIT_MAX:
+        return False
+    dq.append(now)
+    return True
 
 client_openai = AsyncOpenAI(api_key=OPENAI_KEY)
 client_google = genai.Client(api_key=GEMINI_KEY)
@@ -1487,6 +1507,12 @@ async def voice_rejected(callback: types.CallbackQuery, state: FSMContext):
 # --- ГОЛОСОВЫЕ СООБЩЕНИЯ ---
 @dp.message(F.voice)
 async def handle_voice(message: types.Message, state: FSMContext):
+    if not is_allowed(message.from_user.id):
+        await message.answer("⛔ Доступ заборонено. Зверніться до адміністратора EMET.")
+        return
+    if not check_rate_limit(message.from_user.id):
+        await message.answer("⏳ Забагато запитів. Зачекайте хвилину і спробуйте знову.")
+        return
     await bot.send_chat_action(message.chat.id, "typing")
     try:
         file = await bot.get_file(message.voice.file_id)
@@ -1511,6 +1537,12 @@ async def handle_voice(message: types.Message, state: FSMContext):
 # --- ФОТО / СКРИНШОТЫ ---
 @dp.message(F.photo)
 async def handle_photo(message: types.Message, state: FSMContext):
+    if not is_allowed(message.from_user.id):
+        await message.answer("⛔ Доступ заборонено. Зверніться до адміністратора EMET.")
+        return
+    if not check_rate_limit(message.from_user.id):
+        await message.answer("⏳ Забагато запитів. Зачекайте хвилину і спробуйте знову.")
+        return
     await bot.send_chat_action(message.chat.id, "typing")
     try:
         photo = message.photo[-1]
@@ -2253,6 +2285,9 @@ async def handle_message(message: types.Message, state: FSMContext):
         return
     if not is_allowed(message.from_user.id):
         await message.answer("⛔ Доступ заборонено. Зверніться до адміністратора EMET.")
+        return
+    if not check_rate_limit(message.from_user.id):
+        await message.answer("⏳ Забагато запитів. Зачекайте хвилину і спробуйте знову.")
         return
     await process_text_query(message.text, message, state)
 
