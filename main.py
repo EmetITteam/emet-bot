@@ -1640,20 +1640,70 @@ async def coach_combo(callback: types.CallbackQuery, state: FSMContext):
     await callback.answer()
 
 
+CERTS_BRANDS = [
+    ("Vitaran",     "Vitaran"),
+    ("Ellanse",     "Ellanse"),
+    ("Neuramis",    "Neuramis"),
+    ("Petaran",     "Petaran"),
+    ("Neuronox",    "Neuronox"),
+    ("ESSE",        "ESSE"),
+    ("IUSE",        "IUSE"),
+    ("EXOXE",       "EXOXE"),
+    ("SkinBooster", "SkinBooster"),
+    ("Magnox",      "Magnox"),
+]
+
+def build_certs_brand_menu():
+    builder = InlineKeyboardBuilder()
+    for label, brand in CERTS_BRANDS:
+        builder.button(text=f"💊 {label}", callback_data=f"certs_brand_{brand}")
+    builder.button(text="🏠 Головне меню", callback_data="go_home")
+    builder.adjust(2)
+    return builder.as_markup()
+
+
 @dp.callback_query(F.data == "coach_certs")
 async def coach_certs(callback: types.CallbackQuery, state: FSMContext):
     await state.set_state(UserState.mode_certs)
     await state.update_data(chat_history=[], cert_files=[])
     await callback.message.answer(
-        "📜 *Сертифікати та реєстраційні документи*\n\n"
-        "Напишіть назву препарату або документа, наприклад:\n"
-        "• _«Сертифікат Vitaran»_\n"
-        "• _«Реєстраційне посвідчення Ellansé»_\n"
-        "• _«Документи на Neuramis»_\n\n"
-        "Знайду документ і запропоную завантажити оригінальний файл 📥",
-        parse_mode="Markdown"
+        "📜 *Сертифікати та реєстраційні документи*\n\nОберіть препарат:",
+        parse_mode="Markdown",
+        reply_markup=build_certs_brand_menu()
     )
     await callback.answer()
+
+
+@dp.callback_query(F.data.startswith("certs_brand_"))
+async def certs_by_brand(callback: types.CallbackQuery, state: FSMContext):
+    await state.set_state(UserState.mode_certs)
+    brand = callback.data.replace("certs_brand_", "")
+    await callback.answer()
+    rows = db.query_dict(
+        "SELECT file_name, file_id FROM sync_state WHERE folder_label = 'certs' AND LOWER(file_name) LIKE %s ORDER BY file_name",
+        (f"%%{brand.lower()}%%",)
+    )
+    if not rows:
+        await callback.message.answer(
+            f"Документів по *{brand}* не знайдено.",
+            parse_mode="Markdown",
+            reply_markup=build_certs_brand_menu()
+        )
+        return
+    cert_files = [{"file_id": r["file_id"], "name": r["file_name"]} for r in rows if r.get("file_id")]
+    await state.update_data(cert_files=cert_files)
+    builder = InlineKeyboardBuilder()
+    for idx, cf in enumerate(cert_files[:8]):
+        short_name = cf["name"][:40] + "…" if len(cf["name"]) > 40 else cf["name"]
+        builder.button(text=f"📥 {short_name}", callback_data=f"cert_dl_{idx}")
+    builder.button(text="◀️ Назад", callback_data="coach_certs")
+    builder.button(text="🏠 Головне меню", callback_data="go_home")
+    builder.adjust(1)
+    await callback.message.answer(
+        f"📜 *{brand}* — знайдено {len(cert_files)} документ(ів):",
+        parse_mode="Markdown",
+        reply_markup=builder.as_markup()
+    )
 
 
 @dp.callback_query(F.data.startswith("cert_dl_"))
