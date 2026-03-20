@@ -194,7 +194,7 @@ def _files_to_documents(drive, files, folder_label=""):
             name_lower = f["name"].lower()
             category = "combo" if any(w in name_lower for w in ["протокол", "комбін", "combo"]) else "general"
             documents.append(Document(
-                page_content=text,
+                page_content=f"Документ: {f['name']}\n\n{text}",
                 metadata={
                     "source":    f["name"],
                     "url":       f.get("webViewLink", ""),
