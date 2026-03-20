@@ -595,6 +595,7 @@ def _build_trash_html(trash: list) -> str:
         fname   = r.get("file_name", "")
         rid     = r["id"]
         safe_fname = html_escape(fname)
+        confirm_msg = json.dumps("Відновити " + fname + "?")
         rows += (
             f"<tr>"
             f"<td>{safe_fname}</td>"
@@ -602,7 +603,7 @@ def _build_trash_html(trash: list) -> str:
             f"<td class='text-muted'>{del_at}</td>"
             f"<td><span style='color:{color};font-weight:600'>{days} дн.</span></td>"
             f"<td><a href='/knowledge/restore/{rid}' class='btn btn-success btn-sm' "
-            f"onclick='return confirm({json.dumps(\"Відновити \" + fname + \"?\")})'>↩ Відновити</a></td>"
+            f"onclick='return confirm({confirm_msg})'>↩ Відновити</a></td>"
             f"</tr>"
         )
     return f"""
@@ -650,9 +651,10 @@ def knowledge():
         uploader = f.get("uploaded_by") or ("Google Drive" if source == "drive" else "—")
         fn = f.get("file_name", "")
         safe_fn = html_escape(fn)
+        confirm_del = json.dumps("Видалити " + fn + " з бази знань?")
         delete_btn = (
             f"<a href='/knowledge/delete/{fid}' class='btn btn-danger btn-sm' "
-            f"onclick='return confirm({json.dumps(f\"Видалити {fn} з бази знань?\")})'>🗑 Видалити</a>"
+            f"onclick='return confirm({confirm_del})'>🗑 Видалити</a>"
         )
         files_html += (
             f"<tr><td>{safe_fn}</td>"
@@ -1090,6 +1092,7 @@ def access():
         role_badge = f"<span class='badge' style='background:{role_style}'>{r.get('role','')}</span>"
         act_date = str(r.get("activated_at") or "")[:16] or "—"
         em  = r.get('email', '')
+        confirm_del_em = json.dumps("Видалити " + em + "?")
         safe_em = html_escape(em)
         rid = r['id']
         rows_html += (
@@ -1101,7 +1104,7 @@ def access():
             f"<td class='text-muted'>{activated or '—'}</td>"
             f"<td class='text-muted'>{act_date}</td>"
             f"<td><a href='/access/delete/{rid}' class='btn btn-danger btn-sm' "
-            f"onclick='return confirm({json.dumps(f\"Видалити {em}?\")})'>✕</a></td>"
+            f"onclick='return confirm({confirm_del_em})'>✕</a></td>"
             f"</tr>"
         )
     if not rows_html:
