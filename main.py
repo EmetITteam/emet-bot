@@ -66,11 +66,16 @@ ROLES = {"admin", "manager", "operator", "director"}
 def is_allowed(user_id: int) -> bool:
     """Перевіряє доступ: якщо є хоча б один користувач в БД — лише вони мають доступ."""
     try:
-        total = db.query("SELECT COUNT(*) FROM users WHERE is_active=1", fetchone=True)
-        if not total or total[0] == 0:
-            return True  # відкритий доступ — таблиця порожня
-        row = db.query("SELECT is_active FROM users WHERE user_id=%s", (str(user_id),), fetchone=True)
-        return bool(row and row[0] == 1)
+        row = db.query(
+            "SELECT "
+            "  (SELECT COUNT(*) FROM users WHERE is_active=1) AS total,"
+            "  COALESCE((SELECT is_active FROM users WHERE user_id=%s), -1) AS user_active",
+            (str(user_id),), fetchone=True
+        )
+        total, user_active = row
+        if total == 0:
+            return True   # відкритий доступ — таблиця порожня
+        return user_active == 1
     except Exception:
         return True  # при помилці БД — не блокуємо
 
@@ -1414,7 +1419,7 @@ async def cmd_listusers(message: types.Message):
 @dp.message(Command("team"))
 async def cmd_team(message: types.Message):
     role = get_user_role(message.from_user.id)
-    if role not in ("admin", "director") and not is_admin(message.from_user.id):
+    if role not in ("admin", "director") and message.from_user.id != ADMIN_ID:
         return await message.answer("⛔ Команда доступна тільки для директора та адміністратора.")
 
     managers = db.query(
