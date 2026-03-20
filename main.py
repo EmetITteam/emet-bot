@@ -63,29 +63,56 @@ def detect_brand(query: str) -> str:
 
 ROLES = {"admin", "manager", "operator", "director"}
 
-def is_allowed(user_id: int) -> bool:
-    """Перевіряє доступ: якщо є хоча б один користувач в БД — лише вони мають доступ."""
+# TTL-кэш для is_allowed и get_user_role — избегаем DB-запроса на каждое сообщение
+_USER_CACHE_TTL = 60  # секунд
+_user_cache: dict[int, tuple[bool, str, float]] = {}  # user_id → (allowed, role, expires_at)
+
+def _get_user_cache(user_id: int):
+    """Возвращает (allowed, role) из кэша или None если устарел."""
+    entry = _user_cache.get(user_id)
+    if entry and time.monotonic() < entry[2]:
+        return entry[0], entry[1]
+    return None
+
+def _set_user_cache(user_id: int, allowed: bool, role: str):
+    _user_cache[user_id] = (allowed, role, time.monotonic() + _USER_CACHE_TTL)
+
+def invalidate_user_cache(user_id: int):
+    """Сбросить кэш пользователя — вызывать при изменении роли/доступа."""
+    _user_cache.pop(user_id, None)
+
+def _load_user_from_db(user_id: int) -> tuple[bool, str]:
     try:
         row = db.query(
             "SELECT "
             "  (SELECT COUNT(*) FROM users WHERE is_active=1) AS total,"
-            "  COALESCE((SELECT is_active FROM users WHERE user_id=%s), -1) AS user_active",
-            (str(user_id),), fetchone=True
+            "  COALESCE((SELECT is_active FROM users WHERE user_id=%s), -1) AS user_active,"
+            "  COALESCE((SELECT role FROM users WHERE user_id=%s AND is_active=1), 'guest') AS role",
+            (str(user_id), str(user_id)), fetchone=True
         )
-        total, user_active = row
-        if total == 0:
-            return True   # відкритий доступ — таблиця порожня
-        return user_active == 1
+        total, user_active, role = row
+        allowed = True if total == 0 else user_active == 1
+        return allowed, role
     except Exception:
-        return True  # при помилці БД — не блокуємо
+        return True, "guest"
+
+def is_allowed(user_id: int) -> bool:
+    """Перевіряє доступ: якщо є хоча б один користувач в БД — лише вони мають доступ."""
+    cached = _get_user_cache(user_id)
+    if cached:
+        return cached[0]
+    allowed, role = _load_user_from_db(user_id)
+    _set_user_cache(user_id, allowed, role)
+    return allowed
 
 def get_user_role(user_id: int) -> str:
     """Повертає роль користувача ('admin'/'manager'/'operator'), або 'guest' якщо не знайдено."""
-    try:
-        row = db.query("SELECT role FROM users WHERE user_id=%s AND is_active=1", (str(user_id),), fetchone=True)
-        return row[0] if row else "guest"
-    except Exception:
-        return "guest"
+    cached = _get_user_cache(user_id)
+    if cached:
+        return cached[1]
+    allowed, role = _load_user_from_db(user_id)
+    _set_user_cache(user_id, allowed, role)
+    return role
 
 def is_admin(user_id: int) -> bool:
     return user_id == ADMIN_ID or get_user_role(user_id) == "admin"
@@ -719,13 +746,17 @@ async def detect_intent(query: str) -> str:
                 "ПРАВИЛА:\n"
                 "- 'kb' — регламенты компании, HR, отпуска, CRM, структура, зарплаты, ИТ-доступы, "
                 "правила работы, внутренние документы и процедуры EMET.\n"
-                "- 'coach' — всё что касается ПРОДУКТОВ EMET: препараты (Vitaran, Ellanse, Petaran, "
-                "Neuramis, Exoxe, Neuronox, IUSE, Esse, Magnox, PDRN, PCL, филлеры, ботулотоксин), "
-                "их состав, показания, применение, дозировки, отличия; А ТАКЖЕ продажи, скрипты, "
-                "возражения, переговоры с врачами, косметология.\n"
-                "- 'cases' — разбор конкретного диалога/ситуации с клиентом, анализ ошибок встречи.\n"
-                "- 'operational' — командировки, возврат товара, семинары, SLA, оформление расходов.\n"
-                "- 'certs' — сертификаты, регистрационные удостоверения, разрешительные документы на препараты.\n\n"
+                "- 'coach' — продажи препаратов EMET: Vitaran, Ellanse, Petaran, Neuramis, Exoxe, "
+                "Neuronox, IUSE, Esse, Magnox, PDRN, PCL, филлеры, ботулотоксин; их состав, показания, "
+                "применение, дозировки, отличия от конкурентов; скрипты, возражения (дорого, есть аналоги, "
+                "работаю с другим), переговоры с врачами, аргументы продаж. "
+                "ВАЖНО: 'дай диалог', 'распиши диалог', 'другие аргументы', 'что ещё сказать', "
+                "'варианты ответов на возражение', 'детально распиши' — это ВСЕГДА coach.\n"
+                "- 'cases' — ТОЛЬКО когда человек вставляет ГОТОВЫЙ ТЕКСТ реального диалога/переписки "
+                "и просит разобрать ошибки. Просьба 'дай диалог' или 'распиши варианты' = НЕ cases.\n"
+                "- 'operational' — командировки (відрядження), возврат товара, семинары, SLA, "
+                "оформление расходов, документы для поездок, возмещение затрат.\n"
+                "- 'certs' — сертификаты, регистрационные удостоверения, разрешительные документы.\n\n"
                 "Отвечай только одним словом: kb, coach, cases, operational или certs."
             )},
             {"role": "user", "content": query}],
@@ -819,6 +850,24 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
     _COMBO_KEYWORDS = ["комбо", "комбін", "combo", "поєднати", "поєднання", "сочетать", "сочетание", "совместить",
                        "протокол для", "протоколи для", "протоколы для", "які протоколи", "какие протоколы"]
     _is_combo_query = any(kw in _t_lower_early for kw in _COMBO_KEYWORDS)
+
+    # Operational: відрядження та операційні питання — перехоплюємо до detect_intent щоб не впасти в combo
+    _OPERATIONAL_EARLY_KEYWORDS = [
+        "відрядження", "командировк", "возврат товар", "повернення товар",
+        "відшкодуванн", "возмещени", "оформити витрат", "оформить расход",
+        "семінар", "семинар", "документи для поїздки", "документы для поездки",
+    ]
+    _is_operational_early = any(kw in _t_lower_early for kw in _OPERATIONAL_EARLY_KEYWORDS)
+
+    # Follow-up coach: продовження тренінгу — "інші аргументи", "розпиши детально", "варіанти відповідей"
+    _FOLLOWUP_COACH_KEYWORDS = [
+        "інші аргументи", "другие аргументы", "ще аргументи", "що ще сказати", "что ещё сказать",
+        "розпиши детально", "распиши подробно", "детально розпиши", "більше варіантів", "больше вариантов",
+        "розпиши діалог", "распиши диалог", "варіанти відповідей", "варианты ответов на",
+        "детальніше", "подробнее", "ещё варианты", "ще варіанти",
+    ]
+    _is_coach_followup = any(kw in _t_lower_early for kw in _FOLLOWUP_COACH_KEYWORDS)
+
     # combo_mode з кнопки — тільки для першого повідомлення, потім скидаємо
     _combo_from_button = state_data.get("combo_mode", False)
     if _combo_from_button:
@@ -827,7 +876,9 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
     _search_query_ready = None  # буде заповнено паралельно якщо пройдемо через else
     if _combo_from_button or _is_combo_query:
         mode_key = "combo"
-    elif _is_script_early and chat_history:
+    elif _is_operational_early:
+        mode_key = "operational"
+    elif (_is_script_early or _is_coach_followup) and chat_history:
         mode_key = "coach"
     else:
         # detect_intent і prepare_search_query запускаємо паралельно — економія ~300ms
@@ -918,9 +969,10 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
     _has_objection = any(kw in t_lower for kw in _OBJECTION_KEYWORDS)
     _is_script_request = any(kw in t_lower for kw in _SCRIPT_KEYWORDS)
 
-    # Если запрос на скрипт/диалог — ищем продукт И возражение в USER-сообщениях истории
+    # Если coach и нет продукта в тексте — ищем продукт И возражение в истории
+    # Триггер: запит на скрипт, follow-up, або просто немає продукту в поточному повідомленні
     _history_objection = None
-    if mode_key == "coach" and _is_script_request and chat_history:
+    if mode_key == "coach" and (_is_script_request or _is_coach_followup or not _detected_product) and chat_history:
         user_msgs = [m for m in chat_history if m["role"] == "user"]
         for msg in reversed(user_msgs):
             msg_lower = msg["content"].lower()
@@ -942,19 +994,44 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
     else:
         _canonical = None
 
+    # Збагачуємо search_query продуктом — щоб RAG шукав по потрібному препарату, а не random
+    if _canonical and mode_key == "coach":
+        if _is_script_request or _is_coach_followup:
+            search_query = f"скрипт аргументи заперечення діалог {_canonical}"
+        elif _has_objection:
+            search_query = f"заперечення {_canonical} {search_query or text}"
+        elif _canonical.lower() not in (search_query or "").lower():
+            search_query = f"{_canonical} {search_query or text}"
+
     if mode_key == "coach" and _detected_product and _has_objection:
-        # Заперечення + продукт → Формат А
-        llm_user_text = f"[СИСТЕМА: продукт вказано — {_canonical}. Використовуй ФОРМАТ А, НЕ питай уточнення]\n\nВОПРОС:\n{text}"
+        # Заперечення + продукт → SOS-формат
+        llm_user_text = (
+            f"[СИСТЕМА: продукт — {_canonical}. "
+            f"Дай SOS-відповідь: коротка готова фраза менеджера + 2-3 тезиси. НЕ питай уточнення.]\n\n"
+            f"ПИТАННЯ:\n{text}"
+        )
     elif mode_key == "coach" and _is_script_request and _canonical:
-        # Запит на скрипт/діалог → Формат В з конкретним продуктом + можливим запереченням з історії
+        # Запит на скрипт/діалог
         if _history_objection:
             llm_user_text = (
-                f"[СИСТЕМА: дай ФОРМАТ В — скрипт-діалог менеджера з лікарем про {_canonical}. "
-                f"Контекст: менеджер вже стикнувся з запереченням «{_history_objection}» — "
-                f"діалог має відпрацьовувати саме це заперечення]\n\nВОПРОС:\n{text}"
+                f"[СИСТЕМА: продукт — {_canonical}. "
+                f"Дай скрипт-діалог менеджера з лікарем. "
+                f"Контекст: заперечення «{_history_objection}» — діалог має відпрацьовувати саме його.]\n\n"
+                f"ПИТАННЯ:\n{text}"
             )
         else:
-            llm_user_text = f"[СИСТЕМА: дай ФОРМАТ В — скрипт-діалог менеджера з лікарем про {_canonical}]\n\nВОПРОС:\n{text}"
+            llm_user_text = (
+                f"[СИСТЕМА: продукт — {_canonical}. Дай скрипт-діалог менеджера з лікарем.]\n\n"
+                f"ПИТАННЯ:\n{text}"
+            )
+    elif mode_key == "coach" and _is_coach_followup and _canonical:
+        # Продовження тренінгу — "інші аргументи", "розпиши детально"
+        llm_user_text = (
+            f"[СИСТЕМА: продукт — {_canonical}. Продовжуй тренінг. "
+            f"Дай конкретні аргументи/фрази/варіанти відповідей по {_canonical}. "
+            f"НЕ починай з нуля — відповідай як продовження розмови.]\n\n"
+            f"ПИТАННЯ:\n{text}"
+        )
     else:
         llm_user_text = text
 
