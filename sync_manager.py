@@ -250,6 +250,7 @@ def sync_rag_indexes():
         by_folder[fid]["labels"].append(label)
 
     all_changed_names = []
+    changed_by_category = {}  # {"kb": 5, "coach": 3, "certs": 2}
 
     for folder_id, info in by_folder.items():
         files = list_files_with_meta(drive, folder_id)
@@ -289,10 +290,11 @@ def sync_rag_indexes():
             [(f["id"], f["name"], f["modifiedTime"], datetime.now().isoformat()) for f in files]
         )
         all_changed_names.extend(f["name"] for f in changed)
+        changed_by_category[folder_label] = len(changed)
 
     if all_changed_names:
         print(f"RAG sync завершено. Змінено: {all_changed_names}")
-    return all_changed_names
+    return all_changed_names, changed_by_category
 
 
 # ─── Синхронизация курсов из Google Sheets ───────────────────────────────────
@@ -446,9 +448,9 @@ def run_sync():
     Запускает полную синхронизацию: RAG-индексы + курсы.
     Возвращает {'rag_updated': [...], 'courses_updated': [...], 'error': None | str}
     """
-    result = {"rag_updated": [], "courses_updated": [], "error": None}
+    result = {"rag_updated": [], "rag_by_category": {}, "courses_updated": [], "error": None}
     try:
-        result["rag_updated"] = sync_rag_indexes()
+        result["rag_updated"], result["rag_by_category"] = sync_rag_indexes()
         result["courses_updated"] = sync_courses()
     except Exception as e:
         result["error"] = str(e)

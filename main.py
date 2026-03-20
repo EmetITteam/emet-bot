@@ -2275,13 +2275,14 @@ async def auto_sync_task():
             _vdb_kb_google = None
             _vdb_coach_google = None
             _vdb_certs_google = None
-            files_str = ", ".join(result["rag_updated"][:5])
-            if len(result["rag_updated"]) > 5:
-                files_str += f" и ещё {len(result['rag_updated']) - 5}"
+            cat_labels = {"kb": "📚 База знань", "coach": "💼 Коуч", "certs": "📜 Сертифікати"}
+            by_cat = result.get("rag_by_category", {})
+            lines = [f"{cat_labels.get(k, k)}: {v} файл(ів)" for k, v in by_cat.items()]
+            summary = "\n".join(lines) if lines else f"{len(result['rag_updated'])} файл(ів)"
             try:
                 await bot.send_message(
                     ADMIN_ID,
-                    f"RAG-индекс обновлён.\nИзменения: {files_str}"
+                    f"✅ База знань оновлена\n\n{summary}\n\nВсього змін: {len(result['rag_updated'])}"
                 )
             except Exception:
                 pass
@@ -2290,7 +2291,7 @@ async def auto_sync_task():
             try:
                 await bot.send_message(
                     ADMIN_ID,
-                    f"Курсы обновлены: {', '.join(result['courses_updated'])}"
+                    f"✅ Курси оновлено: {', '.join(result['courses_updated'])}"
                 )
             except Exception:
                 pass
