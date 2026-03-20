@@ -193,8 +193,13 @@ def _files_to_documents(drive, files, folder_label=""):
         if text:
             name_lower = f["name"].lower()
             category = "combo" if any(w in name_lower for w in ["протокол", "комбін", "combo"]) else "general"
+            # Для сертифікатів — тільки назва файлу (PDF-тіло часто скановане/garbled)
+            if folder_label == "certs":
+                page_content = f"Документ: {f['name']}"
+            else:
+                page_content = f"Документ: {f['name']}\n\n{text}"
             documents.append(Document(
-                page_content=f"Документ: {f['name']}\n\n{text}",
+                page_content=page_content,
                 metadata={
                     "source":    f["name"],
                     "url":       f.get("webViewLink", ""),
