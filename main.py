@@ -653,35 +653,34 @@ def get_drive_service():
     return _drive_service
 
 
-def get_context_openai(query, mode="kb"):
-    global _vdb_kb_openai, _vdb_coach_openai
-    embeddings = _get_emb_openai()
-    if mode in ("coach", "combo"):
-        if _vdb_coach_openai is None:
-            _vdb_coach_openai = Chroma(persist_directory="data/db_index_coach_openai", embedding_function=embeddings)
-        if mode == "combo":
-            return _extract_docs(_vdb_coach_openai.similarity_search(query, k=15, filter={"category": "combo"}))
-        return _extract_docs(_vdb_coach_openai.similarity_search(query, k=20))
+def get_context(query, mode="kb", provider="openai"):
+    """Єдина точка RAG-пошуку. provider='openai'|'google'."""
+    global _vdb_kb_openai, _vdb_coach_openai, _vdb_kb_google, _vdb_coach_google
+    if provider == "openai":
+        embeddings = _get_emb_openai()
+        if mode in ("coach", "combo"):
+            if _vdb_coach_openai is None:
+                _vdb_coach_openai = Chroma(persist_directory="data/db_index_coach_openai", embedding_function=embeddings)
+            vdb = _vdb_coach_openai
+        else:
+            if _vdb_kb_openai is None:
+                _vdb_kb_openai = Chroma(persist_directory="data/db_index_kb_openai", embedding_function=embeddings)
+            vdb = _vdb_kb_openai
     else:
-        # kb, cases, operational, certs (fallback — не повинен дістатися сюди для certs)
-        if _vdb_kb_openai is None:
-            _vdb_kb_openai = Chroma(persist_directory="data/db_index_kb_openai", embedding_function=embeddings)
-        return _extract_docs(_vdb_kb_openai.similarity_search(query, k=25))
+        embeddings = _get_emb_google()
+        if mode in ("coach", "combo"):
+            if _vdb_coach_google is None:
+                _vdb_coach_google = Chroma(persist_directory="data/db_index_coach_google", embedding_function=embeddings)
+            vdb = _vdb_coach_google
+        else:
+            if _vdb_kb_google is None:
+                _vdb_kb_google = Chroma(persist_directory="data/db_index_kb_google", embedding_function=embeddings)
+            vdb = _vdb_kb_google
 
-
-def get_context_google(query, mode="kb"):
-    global _vdb_kb_google, _vdb_coach_google
-    embeddings = _get_emb_google()
-    if mode in ("coach", "combo"):
-        if _vdb_coach_google is None:
-            _vdb_coach_google = Chroma(persist_directory="data/db_index_coach_google", embedding_function=embeddings)
-        if mode == "combo":
-            return _extract_docs(_vdb_coach_google.similarity_search(query, k=15, filter={"category": "combo"}))
-        return _extract_docs(_vdb_coach_google.similarity_search(query, k=20))
-    else:
-        if _vdb_kb_google is None:
-            _vdb_kb_google = Chroma(persist_directory="data/db_index_kb_google", embedding_function=embeddings)
-        return _extract_docs(_vdb_kb_google.similarity_search(query, k=25))
+    if mode == "combo":
+        return _extract_docs(vdb.similarity_search(query, k=15, filter={"category": "combo"}))
+    k = 20 if mode in ("coach",) else 25
+    return _extract_docs(vdb.similarity_search(query, k=k))
 
 
 async def detect_intent(query: str) -> str:
@@ -780,21 +779,26 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
     _is_script_early = any(kw in _t_lower_early for kw in _SCRIPT_KEYWORDS)
 
     # Авторозмітка по контенту запиту (перемикання між режимами)
-    state_data_early = await state.get_data()
+    # state_data вже отримано вище (рядок ~770), повторний виклик не потрібен
     _COMBO_KEYWORDS = ["комбо", "комбін", "combo", "поєднати", "поєднання", "сочетать", "сочетание", "совместить",
                        "протокол для", "протоколи для", "протоколы для", "які протоколи", "какие протоколы"]
     _is_combo_query = any(kw in _t_lower_early for kw in _COMBO_KEYWORDS)
     # combo_mode з кнопки — тільки для першого повідомлення, потім скидаємо
-    _combo_from_button = state_data_early.get("combo_mode", False)
+    _combo_from_button = state_data.get("combo_mode", False)
     if _combo_from_button:
         await state.update_data(combo_mode=False)
+
+    _search_query_ready = None  # буде заповнено паралельно якщо пройдемо через else
     if _combo_from_button or _is_combo_query:
         mode_key = "combo"
     elif _is_script_early and chat_history:
         mode_key = "coach"
     else:
-        detected_mode = await detect_intent(text)
-        mode_key = detected_mode
+        # detect_intent і prepare_search_query запускаємо паралельно — економія ~300ms
+        mode_key, _search_query_ready = await asyncio.gather(
+            detect_intent(text),
+            prepare_search_query(text),
+        )
 
     state_map = {
         "coach":       UserState.mode_coach,
@@ -836,7 +840,8 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
             )
         return
 
-    search_query = await prepare_search_query(text)
+    # Якщо detect_intent + prepare_search_query вже виконались паралельно — беремо готовий результат
+    search_query = _search_query_ready if _search_query_ready is not None else await prepare_search_query(text)
 
     # --- Python-level детекция продукта + возражения (чтобы LLM не переспрашивал) ---
     _EMET_PRODUCTS = [
@@ -930,10 +935,10 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
 
     try:
         loop = asyncio.get_running_loop()
-        context, sources = await loop.run_in_executor(None, get_context_openai, search_query, mode_key)
+        _model = MODEL_OPENAI_COACH if mode_key in ("coach", "combo") else MODEL_OPENAI
+        context, sources = await loop.run_in_executor(None, get_context, search_query, mode_key, "openai")
         if not context.strip():
             _context_was_empty = True
-        _model = MODEL_OPENAI_COACH if mode_key in ("coach", "combo") else MODEL_OPENAI
         stream = await client_openai.chat.completions.create(
             model=_model,
             messages=[
@@ -969,7 +974,7 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
         ai_used = "Google"
         try:
             loop = asyncio.get_running_loop()
-            context, sources = await loop.run_in_executor(None, get_context_google, search_query, mode_key)
+            context, sources = await loop.run_in_executor(None, get_context, search_query, mode_key, "google")
             # Для Google строим историю как текст
             history_text = ""
             for msg in chat_history:
@@ -989,7 +994,7 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
         ai_used = "Claude"
         try:
             loop = asyncio.get_running_loop()
-            context, sources = await loop.run_in_executor(None, get_context_openai, search_query, mode_key)
+            context, sources = await loop.run_in_executor(None, get_context, search_query, mode_key, "openai")
             claude_msg = await client_claude.messages.create(
                 model=MODEL_CLAUDE,
                 max_tokens=1024,
@@ -1404,26 +1409,36 @@ async def cmd_team(message: types.Message):
     total_onb = db.query("SELECT COUNT(*) FROM onboarding_items", fetchone=True)
     total_onb = total_onb[0] if total_onb else 1
 
+    # Один batch-запит для тестів всіх менеджерів
+    manager_ids = [str(uid) for uid, _, _ in managers]
+    placeholders = ",".join(["%s"] * len(manager_ids))
+    test_stats = {
+        r[0]: r for r in db.query(
+            f"SELECT user_id, COUNT(*), SUM(passed), COALESCE(AVG(score),0) "
+            f"FROM user_progress WHERE user_id IN ({placeholders}) GROUP BY user_id",
+            tuple(manager_ids)
+        )
+    }
+    onb_stats = {
+        r[0]: r[1] for r in db.query(
+            f"SELECT user_id, COALESCE(SUM(completed),0) "
+            f"FROM onboarding_progress WHERE user_id IN ({placeholders}) GROUP BY user_id",
+            tuple(manager_ids)
+        )
+    }
+
     lines = ["👥 *Прогрес команди менеджерів*\n"]
     for uid, fname, uname in managers:
         name = fname or uname or uid
+        uid_s = str(uid)
 
-        # Тести
-        test_row = db.query(
-            "SELECT COUNT(*), SUM(passed), COALESCE(AVG(score),0) FROM user_progress WHERE user_id=%s",
-            (str(uid),), fetchone=True
-        )
-        tests_done = test_row[0] or 0
-        tests_passed = int(test_row[1] or 0)
-        avg_score = float(test_row[2] or 0)
+        t = test_stats.get(uid_s)
+        tests_done   = int(t[1] or 0) if t else 0
+        tests_passed = int(t[2] or 0) if t else 0
+        avg_score    = float(t[3] or 0) if t else 0.0
 
-        # Онбординг
-        onb_row = db.query(
-            "SELECT SUM(completed) FROM onboarding_progress WHERE user_id=%s",
-            (str(uid),), fetchone=True
-        )
-        onb_done = int(onb_row[0] or 0) if onb_row else 0
-        onb_pct = round(onb_done / total_onb * 100) if total_onb else 0
+        onb_done = int(onb_stats.get(uid_s) or 0)
+        onb_pct  = round(onb_done / total_onb * 100) if total_onb else 0
 
         lines.append(
             f"👤 *{name}*\n"

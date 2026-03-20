@@ -1,19 +1,20 @@
 """
-sync_manager.py — Автосинхронизация Google Drive для ЭМЕТ-бота
+sync_manager.py — Автосинхронізація Google Drive для EMET-бота.
 
-Что делает:
-- RAG sync: сравнивает modifiedTime файлов в Drive с sync_state в SQLite.
-  При изменениях — пересобирает оба ChromaDB-индекса в фоне (temp dir → атомарный swap).
-- Course sync: парсит Google Sheets из COURSE_FOLDER_ID → обновляет курсы в SQLite.
+Що робить:
+- RAG sync: порівнює modifiedTime файлів у Drive з sync_state в PostgreSQL.
+  При змінах — перебудовує ChromaDB-індекси у фоні (temp dir → атомарний swap).
+  Сертифікати (certs) — тільки оновлення sync_state, без RAG-індексу (PDF скановані).
+- Course sync: парсить Google Sheets з COURSE_FOLDER_ID → оновлює курси в PostgreSQL.
 
-Формат курса (Google Spreadsheet):
-  Имя файла = название курса
-  Лист "теми":    столбцы: # | Назва теми | Зміст
-  Лист "тести":   столбцы: Тема # | Питання | Варіант A | B | C | D | Правильна (A/B/C/D)
+Формат курсу (Google Spreadsheet):
+  Ім'я файлу = назва курсу
+  Лист "теми":   стовпці: # | Назва теми | Зміст
+  Лист "тести":  стовпці: Тема # | Питання | Варіант A | B | C | D | Правильна (A/B/C/D)
 
-Конфигурация (.env):
-  COURSE_FOLDER_ID   — ID папки Google Drive с курсами (если не задан — курсы не синхронизируются)
-  SYNC_INTERVAL_SEC  — интервал проверки в секундах (по умолчанию 3600)
+Конфігурація (.env):
+  COURSE_FOLDER_ID   — ID папки Google Drive з курсами (якщо не задано — курси не синхронізуються)
+  SYNC_INTERVAL_SEC  — інтервал перевірки в секундах (за замовчуванням 3600)
 """
 
 import os
@@ -214,10 +215,13 @@ def _files_to_documents(drive, files, folder_label=""):
     return documents
 
 
+MAX_RATE_LIMIT_RETRIES = 10
+
 def _batch_to_chroma(chunks, embeddings, persist_dir, rate_limit_sleep, rate_limit_keywords):
     db = None
     for i in range(0, len(chunks), 50):
         batch = chunks[i:i + 50]
+        retries = 0
         success = False
         while not success:
             try:
@@ -230,7 +234,12 @@ def _batch_to_chroma(chunks, embeddings, persist_dir, rate_limit_sleep, rate_lim
             except Exception as e:
                 err = str(e)
                 if any(k in err for k in rate_limit_keywords):
-                    print(f"Rate limit / недоступность. Сплю {rate_limit_sleep} сек...")
+                    retries += 1
+                    if retries > MAX_RATE_LIMIT_RETRIES:
+                        raise RuntimeError(
+                            f"Rate limit перевищено {MAX_RATE_LIMIT_RETRIES} разів поспіль для {persist_dir}. Зупиняємо."
+                        ) from e
+                    print(f"Rate limit / недоступність. Спроба {retries}/{MAX_RATE_LIMIT_RETRIES}. Сплю {rate_limit_sleep} сек...")
                     time.sleep(rate_limit_sleep)
                 else:
                     raise
