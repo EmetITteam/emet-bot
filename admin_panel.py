@@ -602,7 +602,7 @@ def _build_trash_html(trash: list) -> str:
             f"<td class='text-muted'>{del_at}</td>"
             f"<td><span style='color:{color};font-weight:600'>{days} дн.</span></td>"
             f"<td><a href='/knowledge/restore/{rid}' class='btn btn-success btn-sm' "
-            f"onclick='return confirm({json.dumps(f\"Відновити {fname}?\")})'>↩ Відновити</a></td>"
+            f"onclick='return confirm({json.dumps(\"Відновити \" + fname + \"?\")})'>↩ Відновити</a></td>"
             f"</tr>"
         )
     return f"""
