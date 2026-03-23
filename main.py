@@ -841,6 +841,8 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
         "дай диалог", "дай діалог", "дай скрипт", "скрипт з лікарем",
         "діалог з лікарем", "диалог с врачом", "розіграй діалог",
         "зіграй діалог", "покажи діалог", "покажи диалог",
+        "конкретный диалог", "конкретний діалог",
+        "пример диалога", "приклад діалогу",
     ]
     _t_lower_early = text.lower().strip()
     _is_script_early = any(kw in _t_lower_early for kw in _SCRIPT_KEYWORDS)
@@ -997,20 +999,34 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
     else:
         _canonical = None
 
+    # Детекція конкурентів — збагачує контекст для порівняльних аргументів
+    _COMPETITORS = ["radiesse", "радіесс", "sculptra", "скульптра", "juvederm", "ювідерм",
+                    "teosyal", "теосял", "restylane", "рестилайн", "rejuran", "реджуран",
+                    "aesthefill", "естефіл", "pdrn", "пдрн"]
+    _detected_competitor = next((c for c in _COMPETITORS if c in t_lower), None)
+    if not _detected_competitor and chat_history:
+        for _m in reversed([m for m in chat_history if m["role"] == "user"][-3:]):
+            _detected_competitor = next((c for c in _COMPETITORS if c in _m["content"].lower()), None)
+            if _detected_competitor:
+                break
+
     # Збагачуємо search_query продуктом — щоб RAG шукав по потрібному препарату, а не random
     if _canonical and mode_key == "coach":
         if _is_script_request or _is_coach_followup:
             search_query = f"скрипт аргументи заперечення діалог {_canonical}"
+        elif _has_objection and _detected_competitor:
+            search_query = f"порівняння конкурент {_canonical} {_detected_competitor} аргументи"
         elif _has_objection:
             search_query = f"заперечення {_canonical} {search_query or text}"
         elif _canonical.lower() not in (search_query or "").lower():
             search_query = f"{_canonical} {search_query or text}"
 
-    if mode_key == "coach" and _detected_product and _has_objection:
-        # Заперечення + продукт → SOS-формат
+    if mode_key == "coach" and _detected_product and _has_objection and not _is_script_request and not _is_coach_followup:
+        # Заперечення + продукт → SOS-формат (тільки якщо НЕ запит на скрипт/діалог)
         llm_user_text = (
             f"[СИСТЕМА: продукт — {_canonical}. "
-            f"Дай SOS-відповідь: коротка готова фраза менеджера + 2-3 тезиси. НЕ питай уточнення.]\n\n"
+            f"Дай SOS-відповідь: коротка готова фраза менеджера + 2-3 тезиси. "
+            f"⛔ НЕ починай з аргументу тривалості дії. Перший аргумент — фінансова вигода лікаря або унікальний механізм.]\n\n"
             f"ПИТАННЯ:\n{text}"
         )
     elif mode_key == "coach" and _is_script_request and _canonical:
