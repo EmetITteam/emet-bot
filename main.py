@@ -2450,6 +2450,79 @@ async def set_bot_commands(bot: Bot):
     await bot.set_my_commands(commands)
 
 
+# Ціни моделей ($/1M токенів) — синхронізовано з admin_panel.py PRICES
+_MODEL_PRICES = {
+    "gpt-4o":            {"in": 2.50,  "out": 10.00},
+    "gpt-4o-mini":       {"in": 0.15,  "out":  0.60},
+    "gemini-2.0-flash":  {"in": 0.10,  "out":  0.40},
+    "claude-sonnet-4-6": {"in": 3.00,  "out": 15.00},
+}
+DAILY_BUDGET_LIMIT = float(os.getenv("DAILY_BUDGET_LIMIT", "10.0"))  # USD
+
+
+def _calc_row_cost(model: str, tokens_in: int, tokens_out: int) -> float:
+    m = (model or "").lower()
+    for key, p in _MODEL_PRICES.items():
+        if key in m:
+            return (tokens_in * p["in"] + tokens_out * p["out"]) / 1_000_000
+    return 0.0
+
+
+async def daily_cost_task():
+    """Щодня о 23:00 надсилає адміну звіт витрат. Якщо > DAILY_BUDGET_LIMIT — алерт одразу."""
+    from datetime import date, timedelta
+    while True:
+        now = datetime.now()
+        # Перевірка бюджету раз на годину протягом дня
+        next_hour = now.replace(minute=0, second=0, microsecond=0) + timedelta(hours=1)
+        await asyncio.sleep((next_hour - now).total_seconds())
+
+        try:
+            today = date.today().isoformat()
+            rows = db.query_dict(
+                "SELECT model, tokens_in, tokens_out FROM logs WHERE date >= %s",
+                (today + " 00:00:00",)
+            )
+            today_cost = sum(_calc_row_cost(r.get("model",""), r.get("tokens_in") or 0, r.get("tokens_out") or 0) for r in rows)
+            today_calls = len(rows)
+
+            # Алерт якщо перевищено денний бюджет
+            if today_cost >= DAILY_BUDGET_LIMIT:
+                await bot.send_message(
+                    ADMIN_ID,
+                    f"⚠️ *EMET: перевищено денний бюджет!*\n\n"
+                    f"Витрачено сьогодні: *${today_cost:.3f}* з ліміту ${DAILY_BUDGET_LIMIT:.2f}\n"
+                    f"Запитів: {today_calls}\n\n"
+                    f"Перегляд: /admin → Дашборд",
+                    parse_mode="Markdown"
+                )
+
+            # Щоденний звіт о 23:00
+            if datetime.now().hour == 23:
+                # Розбивка по моделях за сьогодні
+                model_cost: dict = {}
+                for r in rows:
+                    m = r.get("model") or "unknown"
+                    model_cost[m] = model_cost.get(m, 0.0) + _calc_row_cost(m, r.get("tokens_in") or 0, r.get("tokens_out") or 0)
+
+                lines = "\n".join(
+                    f"  • `{m}`: ${c:.4f}" for m, c in sorted(model_cost.items(), key=lambda x: -x[1])
+                ) or "  —"
+
+                status = "🟢" if today_cost < DAILY_BUDGET_LIMIT * 0.7 else ("🟡" if today_cost < DAILY_BUDGET_LIMIT else "🔴")
+                await bot.send_message(
+                    ADMIN_ID,
+                    f"{status} *EMET: денний звіт витрат*\n\n"
+                    f"📅 {today}\n"
+                    f"💬 Запитів: *{today_calls}*\n"
+                    f"💰 Витрачено: *${today_cost:.4f}* / ліміт ${DAILY_BUDGET_LIMIT:.2f}\n\n"
+                    f"По моделях:\n{lines}",
+                    parse_mode="Markdown"
+                )
+        except Exception as e:
+            print(f"[COST] помилка: {e}")
+
+
 async def ttl_cleanup_task():
     """Щодня о 03:00 видаляє старі логи (>90 днів) та аудит-записи (>90 днів)."""
     from datetime import date, timedelta
@@ -2600,6 +2673,7 @@ async def main():
         print("Бот Эмет запущен. Автосинхронизация отключена (AUTO_SYNC_ENABLED=false).")
     asyncio.create_task(weekly_digest_task())
     asyncio.create_task(ttl_cleanup_task())
+    asyncio.create_task(daily_cost_task())
 
     # Повідомлення адміну про запуск — розрізняємо деплой від несподіваного рестарту
     try:
