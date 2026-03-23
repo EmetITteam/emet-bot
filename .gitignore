@@ -18,6 +18,9 @@ venv/
 *.html
 *.pdf
 
+# Mini App (пилот, не в git)
+mini_app/
+
 # IDE
 .idea/
 .vscode/

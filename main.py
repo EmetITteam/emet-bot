@@ -294,6 +294,52 @@ def init_db():
                  added_at TIMESTAMP DEFAULT NOW())''')
             cur.execute("CREATE INDEX IF NOT EXISTS idx_allowed_emails_email ON allowed_emails(email)")
 
+            # Історія діалогів — виживає після рестарту контейнера
+            cur.execute('''CREATE TABLE IF NOT EXISTS chat_histories
+                (user_id TEXT PRIMARY KEY,
+                 history_json TEXT NOT NULL DEFAULT '[]',
+                 updated_at TIMESTAMP DEFAULT NOW())''')
+
+            # Оцінки відповідей (👍/👎)
+            cur.execute('''CREATE TABLE IF NOT EXISTS feedback
+                (id SERIAL PRIMARY KEY,
+                 log_id INTEGER,
+                 user_id TEXT,
+                 rating INTEGER,
+                 mode TEXT,
+                 created_at TIMESTAMP DEFAULT NOW())''')
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_feedback_log ON feedback(log_id)")
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_feedback_mode ON feedback(mode)")
+
+            # Спроби входу в адмін-панель (brute-force захист, виживає після рестарту)
+            cur.execute('''CREATE TABLE IF NOT EXISTS admin_login_attempts
+                (ip TEXT PRIMARY KEY,
+                 count INTEGER DEFAULT 0,
+                 locked_until TIMESTAMP)''')
+
+
+def _load_chat_history_db(user_id: int) -> list:
+    """Завантажує останню історію діалогу з БД (fallback при рестарті)."""
+    try:
+        row = db.query("SELECT history_json FROM chat_histories WHERE user_id=%s", (str(user_id),), fetchone=True)
+        if row:
+            return json.loads(row[0])
+    except Exception:
+        pass
+    return []
+
+
+def _save_chat_history_db(user_id: int, history: list):
+    """Зберігає поточну історію діалогу в БД."""
+    try:
+        db.execute(
+            "INSERT INTO chat_histories (user_id, history_json, updated_at) VALUES (%s,%s,NOW()) "
+            "ON CONFLICT (user_id) DO UPDATE SET history_json=EXCLUDED.history_json, updated_at=NOW()",
+            (str(user_id), json.dumps(history, ensure_ascii=False))
+        )
+    except Exception as e:
+        print(f"[history] DB save error: {e}")
+
 
 def seed_vitaran_course():
     """Загружает демо-курс по Vitaran если его ещё нет в БД"""
@@ -509,15 +555,18 @@ def seed_onboarding():
 
 
 # --- 5b. ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ БД ---
-def log_to_db(user_id, username, mode, ai_engine, question, answer, has_source, model=None, tokens_in=0, tokens_out=0):
+def log_to_db(user_id, username, mode, ai_engine, question, answer, has_source, model=None, tokens_in=0, tokens_out=0) -> int:
+    """Записує лог запиту і повертає log_id (для прив'язки feedback)."""
     try:
-        db.execute(
-            "INSERT INTO logs (date, user_id, username, mode, ai_engine, question, answer, found_in_db, model, tokens_in, tokens_out) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
+        return db.execute_returning(
+            "INSERT INTO logs (date, user_id, username, mode, ai_engine, question, answer, found_in_db, model, tokens_in, tokens_out) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id",
             (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), user_id, username,
              mode, ai_engine, question, answer, 1 if has_source else 0, model, tokens_in, tokens_out)
         )
     except Exception as e:
         print(f"[log] помилка запису в БД: {e}")
+        return 0
 
 
 def save_course(title, json_data):
@@ -835,6 +884,9 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
     # Читаем историю ДО detect_intent — нужна для форс-роутинга скрипт-запросов
     state_data = await state.get_data()
     chat_history = state_data.get("chat_history", [])
+    # Якщо in-memory порожня (рестарт контейнера) — відновлюємо з БД
+    if not chat_history:
+        chat_history = _load_chat_history_db(message.from_user.id)
 
     # Ключевые слова запросов на скрипт/диалог (один список — используется в двух местах ниже)
     _SCRIPT_KEYWORDS = [
@@ -1188,7 +1240,7 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
         answer += "\n\n*Ознайомитись з документами:*\n" + "\n".join(final_links)
 
     _uname = message.from_user.username or f"id{message.from_user.id}"
-    log_to_db(message.from_user.id, _uname, mode_key, ai_used, text, answer, bool(used_links), _model_used, _tokens_in, _tokens_out)
+    _log_id = log_to_db(message.from_user.id, _uname, mode_key, ai_used, text, answer, bool(used_links), _model_used, _tokens_in, _tokens_out)
 
     # Зберігаємо історію діалогу для всіх режимів
     # coach: 3 обміни (6 повідомлень), решта: 2 обміни (4 повідомлення)
@@ -1199,6 +1251,7 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
         limit = 6 if mode_key == "coach" else 4
         chat_history = chat_history[-limit:]
         await state.update_data(chat_history=chat_history)
+        _save_chat_history_db(message.from_user.id, chat_history)
 
     if _context_was_empty and mode_key == "kb":
         try:
@@ -1210,6 +1263,14 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
             print(f"[log] помилка сповіщення адміна: {admin_err}")
 
     await send_paginated(message, state, answer, sent_msg=sent_msg)
+
+    # Кнопки оцінки відповіді (coach і kb)
+    if mode_key in ("coach", "kb") and _log_id:
+        fb_builder = InlineKeyboardBuilder()
+        fb_builder.button(text="👍", callback_data=f"fb_up_{_log_id}")
+        fb_builder.button(text="👎", callback_data=f"fb_dn_{_log_id}")
+        fb_builder.adjust(2)
+        await message.answer("Відповідь була корисною?", reply_markup=fb_builder.as_markup())
 
     # Після відповіді в режимі Coach — показуємо меню Coach знову
     if mode_key == "coach":
@@ -1738,6 +1799,7 @@ def get_coach_menu():
 async def mode_coach(callback: types.CallbackQuery, state: FSMContext):
     await state.set_state(UserState.mode_coach)
     await state.update_data(chat_history=[])
+    _save_chat_history_db(callback.from_user.id, [])
     await callback.message.answer(
         "💼 *Sales Коуч EMET*\n\nОберіть режим або напишіть своє питання:",
         parse_mode="Markdown",
@@ -1750,6 +1812,7 @@ async def mode_coach(callback: types.CallbackQuery, state: FSMContext):
 async def coach_free(callback: types.CallbackQuery, state: FSMContext):
     await state.set_state(UserState.mode_coach)
     await state.update_data(chat_history=[])
+    _save_chat_history_db(callback.from_user.id, [])
     await callback.message.answer("💬 Вільний діалог. Опишіть запит клієнта або заперечення.")
     await callback.answer()
 
@@ -1758,6 +1821,7 @@ async def coach_free(callback: types.CallbackQuery, state: FSMContext):
 async def coach_sos(callback: types.CallbackQuery, state: FSMContext):
     await state.set_state(UserState.mode_coach)
     await state.update_data(chat_history=[])
+    _save_chat_history_db(callback.from_user.id, [])
     await callback.message.answer(
         "🆘 *SOS — швидка підготовка*\n\n"
         "Напишіть ситуацію, наприклад:\n"
@@ -1774,6 +1838,7 @@ async def coach_sos(callback: types.CallbackQuery, state: FSMContext):
 async def coach_objections(callback: types.CallbackQuery, state: FSMContext):
     await state.set_state(UserState.mode_coach)
     await state.update_data(chat_history=[])
+    _save_chat_history_db(callback.from_user.id, [])
     await callback.message.answer(
         "🗣 *Робота з запереченнями*\n\n"
         "Напишіть заперечення клієнта, наприклад:\n"
@@ -1790,6 +1855,7 @@ async def coach_objections(callback: types.CallbackQuery, state: FSMContext):
 async def coach_combo(callback: types.CallbackQuery, state: FSMContext):
     await state.set_state(UserState.mode_coach)
     await state.update_data(chat_history=[], combo_mode=True)
+    _save_chat_history_db(callback.from_user.id, [])
     await callback.message.answer(
         "🔗 *Комбо-протоколи*\n\n"
         "Напишіть препарат або завдання, наприклад:\n"
@@ -1828,6 +1894,7 @@ def build_certs_brand_menu():
 async def coach_certs(callback: types.CallbackQuery, state: FSMContext):
     await state.set_state(UserState.mode_certs)
     await state.update_data(chat_history=[], cert_files=[])
+    _save_chat_history_db(callback.from_user.id, [])
     await callback.message.answer(
         "📜 *Сертифікати та реєстраційні документи*\n\nОберіть препарат:",
         parse_mode="Markdown",
@@ -1904,6 +1971,7 @@ async def download_cert(callback: types.CallbackQuery, state: FSMContext):
 async def coach_seasonal(callback: types.CallbackQuery, state: FSMContext):
     await state.set_state(UserState.mode_coach)
     await state.update_data(chat_history=[])
+    _save_chat_history_db(callback.from_user.id, [])
     await callback.message.answer(
         "🗓 *Сезонні скрипти*\n\n"
         "Напишіть тему або сезон, наприклад:\n"
@@ -1920,6 +1988,35 @@ async def coach_seasonal(callback: types.CallbackQuery, state: FSMContext):
 async def go_home(callback: types.CallbackQuery, state: FSMContext):
     await state.set_state(UserState.mode_kb)
     await callback.message.answer("Головне меню:", reply_markup=get_main_menu())
+    await callback.answer()
+
+
+# --- FEEDBACK (👍/👎) ---
+@dp.callback_query(F.data.startswith("fb_"))
+async def handle_feedback(callback: types.CallbackQuery):
+    parts = callback.data.split("_")
+    if len(parts) != 3:
+        await callback.answer()
+        return
+    _, direction, log_id_str = parts
+    rating = 1 if direction == "up" else -1
+    try:
+        log_id = int(log_id_str)
+        # Перевіряємо чи вже оцінював (один голос на лог)
+        existing = db.query("SELECT id FROM feedback WHERE log_id=%s AND user_id=%s", (log_id, str(callback.from_user.id)), fetchone=True)
+        if existing:
+            await callback.answer("Ви вже оцінили цю відповідь.")
+            return
+        # Отримуємо mode з logs
+        log_row = db.query("SELECT mode FROM logs WHERE id=%s", (log_id,), fetchone=True)
+        mode = log_row[0] if log_row else "unknown"
+        db.execute(
+            "INSERT INTO feedback (log_id, user_id, rating, mode) VALUES (%s,%s,%s,%s)",
+            (log_id, str(callback.from_user.id), rating, mode)
+        )
+        await callback.message.edit_text("Дякую за оцінку!" if rating == 1 else "Зрозуміло, працюємо над покращенням!")
+    except Exception as e:
+        print(f"[feedback] error: {e}")
     await callback.answer()
 
 

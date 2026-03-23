@@ -30,7 +30,7 @@ services:
       - TZ=Europe/Kiev
     volumes:
       - ./data:/app/data
-      - ./credentials.json:/app/credentials.json
+      # credentials.json більше не монтується — використовуємо GOOGLE_SERVICE_ACCOUNT_JSON у .env
     healthcheck:
       test: ["CMD-SHELL", "pgrep -f 'python main.py' > /dev/null || exit 1"]
       interval: 30s

@@ -1,143 +1,101 @@
-import sys, io
-sys.stdout = io.TextIOWrapper(sys.stdout.buffer, encoding="utf-8", errors="replace")
-
 """
-Routing Unit Tests — перевірка логіки визначення режиму бота.
-
-Запуск:
-    python tests/test_routing.py
-
-Що перевіряє:
-    - Combo keywords: чи правильно детектуються запити на комбо-протоколи
-    - Script keywords: чи правильно детектуються запити на діалог/скрипт
-    - Negative cases: чи НЕ спрацьовують keywords на нерелевантних запитах
-
-Коли запускати:
-    Після будь-яких змін в main.py (нові keywords, зміна логіки routing).
-    НЕ потребує API-ключів, не витрачає токени.
+tests/test_routing.py
 """
 
-import sys
-
-# --------------------------------------------------------------------------
-# Копія констант з main.py (тримаємо в синхронізації вручну при змінах)
-# --------------------------------------------------------------------------
-COMBO_KEYWORDS = [
-    "комбо", "комбін", "combo", "поєднати", "поєднання",
-    "сочетать", "сочетание", "совместить",
-    "протокол для", "протоколи для", "протоколы для",
-    "які протоколи", "какие протоколы",
-]
-
-SCRIPT_KEYWORDS = [
+_SCRIPT_KEYWORDS = [
     "дай диалог", "дай діалог", "дай скрипт", "скрипт з лікарем",
-    "діалог з лікарем", "диалог с врачом", "розіграй діалог",
-    "зіграй діалог", "покажи діалог", "покажи диалог",
+    "конкретный диалог", "конкретний діалог",
+    "пример диалога", "приклад діалогу",
+    "покажи діалог", "покажи диалог",
 ]
 
-
-def is_combo(text: str) -> bool:
-    t = text.lower().strip()
-    return any(kw in t for kw in COMBO_KEYWORDS)
-
-
-def is_script(text: str) -> bool:
-    t = text.lower().strip()
-    return any(kw in t for kw in SCRIPT_KEYWORDS)
-
-
-# --------------------------------------------------------------------------
-# Тест-кейси
-# --------------------------------------------------------------------------
-COMBO_SHOULD_MATCH = [
-    ("З чим комбінують Vitaran?",                       "комбін — пряме слово"),
-    ("Комбо протоколи для постакне",                    "комбо — пряме слово"),
-    ("combo protocols for skin",                        "combo EN"),
-    ("як поєднати Petaran з Vitaran?",                  "поєднати"),
-    ("поєднання препаратів при птозі",                  "поєднання"),
-    ("сочетать Ellanse с биоревитализацией",            "сочетать RU"),
-    ("какие протоколы для лифтинга?",                   "какие протоколы"),
-    ("які протоколи для омолодження?",                  "які протоколи"),
-    ("протоколи для покращення якості шкіри",           "протоколи для"),
-    ("протоколы для коррекции носогубок",               "протоколы для"),
+_FOLLOWUP_COACH_KEYWORDS = [
+    "інші аргументи", "другие аргументы",
+    "що ще сказати", "что ещё сказать",
+    "розпиши детально", "распиши подробно",
+    "як відповісти", "как ответить",
+    "що сказати", "что сказать",
 ]
 
-COMBO_SHOULD_NOT_MATCH = [
-    ("Розкажи про Vitaran",                             "загальне питання про препарат"),
-    ("Що входить до складу Petaran?",                   "склад препарату"),
-    ("Клієнт каже що дорого",                           "заперечення"),
-    ("Як оформити відпустку?",                          "HR питання"),
-    ("Дай скрипт з лікарем",                            "скрипт — не комбо"),
-    ("Навіщо потрібні сертифікати?",                    "сертифікати"),
-    ("Які показання у Neuramis?",                       "показання — не комбо"),
+_OPERATIONAL_EARLY_KEYWORDS = [
+    "відрядження", "командировк",
+    "семінар", "семинар",
+    "возврат товар", "повернення товар",
 ]
 
-SCRIPT_SHOULD_MATCH = [
-    ("Дай діалог з лікарем про Vitaran",                "дай діалог"),
-    ("дай скрипт продажу",                              "дай скрипт"),
-    ("покажи диалог с врачом",                          "покажи диалог RU"),
-    ("розіграй діалог — лікар каже дорого",             "розіграй діалог"),
+_EMET_PRODUCTS = [
+    "ellanse", "elanse", "елансе", "элансе", "эллансе",
+    "neuramis", "нейрамис", "нейраміс",
+    "vitaran", "вітаран", "витаран",
+    "petaran", "петаран",
+    "exoxe", "экзокс",
+    "esse", "эссе", "ессе",
+    "iuse", "айюз", "июз",
+    "magnox", "магнокс",
 ]
 
-SCRIPT_SHOULD_NOT_MATCH = [
-    ("Розкажи про Vitaran",                             "загальне питання"),
-    ("З чим комбінують Petaran?",                       "комбо питання"),
-    ("Як оформити лікарняний?",                         "HR питання"),
+_OBJECTION_KEYWORDS = [
+    "дорого", "дорогой", "дорога",
+    "є дешевше", "есть дешевле",
+    "не вірю", "не верю", "подумаю",
 ]
 
-
-# --------------------------------------------------------------------------
-# Runner
-# --------------------------------------------------------------------------
-def run_group(label, cases, fn, expected):
-    passed = failed = 0
-    failures = []
-    for text, desc in cases:
-        result = fn(text)
-        ok = (result == expected)
-        if ok:
-            passed += 1
-        else:
-            failed += 1
-            got = "MATCH" if result else "NO MATCH"
-            exp = "MATCH" if expected else "NO MATCH"
-            failures.append(f"    ❌  «{text}»\n       ({desc})\n       очікувалось {exp}, отримано {got}")
-    status = "✅" if failed == 0 else "❌"
-    print(f"  {status} {label}: {passed}/{passed+failed}")
-    for f in failures:
-        print(f)
-    return failed
+_PRODUCT_CANONICAL = {
+    "ellanse": "Ellanse", "elanse": "Ellanse",
+    "елансе": "Ellanse", "элансе": "Ellanse", "эллансе": "Ellanse",
+    "neuramis": "Neuramis", "нейрамис": "Neuramis", "нейраміс": "Neuramis",
+    "vitaran": "Vitaran", "вітаран": "Vitaran", "витаран": "Vitaran",
+    "petaran": "Petaran", "петаран": "Petaran",
+    "exoxe": "EXOXE", "экзокс": "EXOXE",
+    "esse": "ESSE", "эссе": "ESSE", "ессе": "ESSE",
+    "iuse": "IUSE", "айюз": "IUSE", "июз": "IUSE",
+    "magnox": "Magnox", "магнокс": "Magnox",
+}
 
 
-def run():
-    print(f"\n{'='*60}")
-    print("Routing Unit Tests")
-    print(f"{'='*60}\n")
-
-    total_failed = 0
-
-    print("[ COMBO KEYWORDS ]")
-    total_failed += run_group("Мають спрацювати   ", COMBO_SHOULD_MATCH,     is_combo, True)
-    total_failed += run_group("НЕ мають спрацювати", COMBO_SHOULD_NOT_MATCH, is_combo, False)
-
-    print("\n[ SCRIPT KEYWORDS ]")
-    total_failed += run_group("Мають спрацювати   ", SCRIPT_SHOULD_MATCH,    is_script, True)
-    total_failed += run_group("НЕ мають спрацювати", SCRIPT_SHOULD_NOT_MATCH, is_script, False)
-
-    total = (len(COMBO_SHOULD_MATCH) + len(COMBO_SHOULD_NOT_MATCH) +
-             len(SCRIPT_SHOULD_MATCH) + len(SCRIPT_SHOULD_NOT_MATCH))
-    passed = total - total_failed
-
-    print(f"\n{'='*60}")
-    print(f"Результат: {passed}/{total} тестів пройшло")
-    if total_failed == 0:
-        print("✅ ВСІ ТЕСТИ ПРОЙШЛИ")
-    else:
-        print(f"❌ {total_failed} тестів не пройшло — перевір keywords в main.py")
-    print(f"{'='*60}\n")
-
-    sys.exit(0 if total_failed == 0 else 1)
+def _is_script(text): return any(kw in text.lower() for kw in _SCRIPT_KEYWORDS)
+def _is_followup(text): return any(kw in text.lower() for kw in _FOLLOWUP_COACH_KEYWORDS)
+def _is_operational(text): return any(kw in text.lower() for kw in _OPERATIONAL_EARLY_KEYWORDS)
+def _detect_product(text):
+    t = text.lower()
+    return next((p for p in _EMET_PRODUCTS if p in t), None)
+def _has_objection(text): return any(kw in text.lower() for kw in _OBJECTION_KEYWORDS)
 
 
-if __name__ == "__main__":
-    run()
+def test_script_dai_dialog(): assert _is_script("дай диалог по эллансе")
+def test_script_konkretny(): assert _is_script("дай конкретный диалог с примерами")
+def test_script_ukr(): assert _is_script("покажи діалог менеджера з лікарем")
+def test_script_negative(): assert not _is_script("Еллансе дорого, що відповісти?")
+
+def test_followup_args_ru(): assert _is_followup("врача не интересует, есть другие аргументы?")
+def test_followup_how_to_answer(): assert _is_followup("як відповісти на це заперечення?")
+def test_followup_negative(): assert not _is_followup("Еллансе дорого")
+
+def test_operational_vidryadzhennya(): assert _is_operational("як оформити відрядження?")
+def test_operational_seminar(): assert _is_operational("семінар наступного тижня")
+def test_operational_negative(): assert not _is_operational("Еллансе дорого")
+
+def test_product_ellanse_ru():
+    p = _detect_product("эллансе дорого")
+    assert p == "эллансе"
+    assert _PRODUCT_CANONICAL[p] == "Ellanse"
+
+def test_product_vitaran():
+    p = _detect_product("розкажи про вітаран")
+    assert _PRODUCT_CANONICAL[p] == "Vitaran"
+
+def test_product_not_found(): assert _detect_product("клієнт каже що дорого") is None
+
+def test_objection_dorogo(): assert _has_objection("еллансе дорого")
+def test_objection_negative(): assert not _has_objection("розкажи про механізм дії")
+
+def test_sos_trigger():
+    text = "эллансе дорого"
+    assert _detect_product(text) is not None
+    assert _has_objection(text) is True
+    assert _is_script(text) is False
+    assert _is_followup(text) is False
+
+def test_no_sos_when_script():
+    text = "дай конкретный диалог по эллансе дорого"
+    assert _is_script(text) is True

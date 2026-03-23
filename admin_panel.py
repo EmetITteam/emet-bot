@@ -79,9 +79,8 @@ def set_security_headers(response):
     )
     return response
 
-# ─── Brute-force protection ────────────────────────────────────────────────────
+# ─── Brute-force protection (PostgreSQL-backed, виживає після рестарту) ────────
 
-_login_attempts: dict[str, dict] = {}  # ip → {count, locked_until}
 LOGIN_MAX_ATTEMPTS = 5
 LOGIN_LOCKOUT_SEC  = 300  # 5 хвилин
 
@@ -90,26 +89,60 @@ def _get_client_ip() -> str:
     return request.headers.get("X-Forwarded-For", request.remote_addr or "unknown").split(",")[0].strip()
 
 
+def _ensure_login_table():
+    """Таблиця створюється в main.py init_db(), але адмінка може стартувати першою."""
+    try:
+        db.execute(
+            "CREATE TABLE IF NOT EXISTS admin_login_attempts "
+            "(ip TEXT PRIMARY KEY, count INTEGER DEFAULT 0, locked_until TIMESTAMP)"
+        )
+    except Exception:
+        pass
+
+
+_ensure_login_table()
+
+
 def _is_locked(ip: str) -> tuple[bool, int]:
-    """Повертає (locked, seconds_left)."""
-    entry = _login_attempts.get(ip)
-    if not entry:
-        return False, 0
-    if entry.get("locked_until", 0) > time.monotonic():
-        return True, int(entry["locked_until"] - time.monotonic())
+    """Повертає (locked, seconds_left). Читає з PostgreSQL."""
+    try:
+        row = db.query(
+            "SELECT count, locked_until FROM admin_login_attempts WHERE ip=%s",
+            (ip,), fetchone=True
+        )
+        if not row:
+            return False, 0
+        locked_until = row[1]
+        if locked_until and locked_until > datetime.now():
+            secs = int((locked_until - datetime.now()).total_seconds())
+            return True, max(secs, 0)
+    except Exception:
+        pass
     return False, 0
 
 
 def _record_failed(ip: str):
-    entry = _login_attempts.setdefault(ip, {"count": 0, "locked_until": 0})
-    entry["count"] += 1
-    if entry["count"] >= LOGIN_MAX_ATTEMPTS:
-        entry["locked_until"] = time.monotonic() + LOGIN_LOCKOUT_SEC
-        entry["count"] = 0
+    try:
+        db.execute(
+            "INSERT INTO admin_login_attempts (ip, count) VALUES (%s, 1) "
+            "ON CONFLICT (ip) DO UPDATE SET count = admin_login_attempts.count + 1",
+            (ip,)
+        )
+        row = db.query("SELECT count FROM admin_login_attempts WHERE ip=%s", (ip,), fetchone=True)
+        if row and row[0] >= LOGIN_MAX_ATTEMPTS:
+            db.execute(
+                "UPDATE admin_login_attempts SET count=0, locked_until=%s WHERE ip=%s",
+                (datetime.now() + timedelta(seconds=LOGIN_LOCKOUT_SEC), ip)
+            )
+    except Exception:
+        pass
 
 
 def _reset_attempts(ip: str):
-    _login_attempts.pop(ip, None)
+    try:
+        db.execute("DELETE FROM admin_login_attempts WHERE ip=%s", (ip,))
+    except Exception:
+        pass
 
 # ─── Auth ──────────────────────────────────────────────────────────────────────
 
@@ -477,6 +510,25 @@ def dashboard():
 
     last10 = rows[-10:][::-1]
 
+    # Feedback stats за вибраний період
+    fb_rows = db_query(
+        "SELECT rating, mode FROM feedback WHERE created_at >= %s AND created_at <= %s",
+        (date_from + " 00:00:00", date_to + " 23:59:59")
+    )
+    fb_total   = len(fb_rows)
+    fb_positive = sum(1 for r in fb_rows if r.get("rating") == 1)
+    fb_negative = sum(1 for r in fb_rows if r.get("rating") == -1)
+    fb_pct      = round(fb_positive / fb_total * 100) if fb_total else 0
+    fb_by_mode  = {}
+    for r in fb_rows:
+        m = r.get("mode") or "unknown"
+        if m not in fb_by_mode:
+            fb_by_mode[m] = {"up": 0, "dn": 0}
+        if r.get("rating") == 1:
+            fb_by_mode[m]["up"] += 1
+        else:
+            fb_by_mode[m]["dn"] += 1
+
     j = lambda x: json.dumps(x, ensure_ascii=False)
 
     model_rows_html = ""
@@ -542,6 +594,24 @@ def dashboard():
         <td>{tokens_out_sum:,}</td><td>${total_cost:.4f}</td>
       </tr>
     </tbody>
+  </table>
+</div>
+
+<div class="kpi-row" style="margin-top:0">
+  <div class="kpi"><div class="val">{fb_total}</div><div class="lbl">Оцінок отримано</div></div>
+  <div class="kpi"><div class="val" style="color:#4caf50">{fb_positive} 👍</div><div class="lbl">Позитивних</div></div>
+  <div class="kpi"><div class="val" style="color:#e94560">{fb_negative} 👎</div><div class="lbl">Негативних</div></div>
+  <div class="kpi"><div class="val">{fb_pct}%</div><div class="lbl">Задоволеність</div></div>
+</div>
+
+<div class="card"><h2>👍👎 Оцінки по режимах</h2>
+  <table>
+    <thead><tr><th>Режим</th><th>👍</th><th>👎</th><th>%</th></tr></thead>
+    <tbody>{"".join(
+      f"<tr><td>{m}</td><td style='color:#4caf50'>{v['up']}</td><td style='color:#e94560'>{v['dn']}</td>"
+      f"<td>{round(v['up']/(v['up']+v['dn'])*100) if v['up']+v['dn'] else 0}%</td></tr>"
+      for m, v in sorted(fb_by_mode.items(), key=lambda x: -(x[1]['up']+x[1]['dn']))
+    ) if fb_by_mode else "<tr><td colspan='4' style='color:#888'>Оцінок поки немає</td></tr>"}</tbody>
   </table>
 </div>
 

@@ -21,6 +21,9 @@ import os
 import io
 import time
 import shutil
+import threading
+import base64
+import json as _json
 import db
 import pandas as pd
 from datetime import datetime
@@ -52,6 +55,9 @@ SCOPES = [
     "https://www.googleapis.com/auth/spreadsheets.readonly",
 ]
 
+# Запобігає паралельній перебудові індексів (auto-sync + ручний sync з адмін-панелі)
+_sync_lock = threading.Lock()
+
 # Папки Google Drive → пути индексов + размер чанка
 # label используется как суффикс в имени папки индекса: db_index_{label}_{provider}
 # Примітка: certs навмисно виключені — пошук по сертифікатах йде через SQL (sync_state),
@@ -68,10 +74,24 @@ CERTS_FOLDER_ID = "1ma-6CNO2FeHaicbRag7RvStkf5Rp1MyJ"
 
 # ─── Авторизация ──────────────────────────────────────────────────────────────
 
+def _get_google_credentials():
+    """
+    Завантажує Google Service Account credentials.
+    Спочатку пробує env var GOOGLE_SERVICE_ACCOUNT_JSON (JSON-рядок або base64).
+    Fallback: файл SERVICE_ACCOUNT_FILE (для локальної розробки).
+    """
+    creds_env = os.getenv("GOOGLE_SERVICE_ACCOUNT_JSON", "")
+    if creds_env:
+        try:
+            info = _json.loads(creds_env)
+        except Exception:
+            info = _json.loads(base64.b64decode(creds_env).decode())
+        return service_account.Credentials.from_service_account_info(info, scopes=SCOPES)
+    return service_account.Credentials.from_service_account_file(SERVICE_ACCOUNT_FILE, scopes=SCOPES)
+
+
 def get_services():
-    creds = service_account.Credentials.from_service_account_file(
-        SERVICE_ACCOUNT_FILE, scopes=SCOPES
-    )
+    creds = _get_google_credentials()
     drive = build("drive", "v3", credentials=creds)
     sheets = build("sheets", "v4", credentials=creds)
     return drive, sheets
@@ -487,12 +507,18 @@ def run_sync():
     """
     Запускает полную синхронизацию: RAG-индексы + курсы.
     Возвращает {'rag_updated': [...], 'courses_updated': [...], 'error': None | str}
+    Если синхронизация уже выполняется — возвращает error='sync_in_progress' немедленно.
     """
-    result = {"rag_updated": [], "rag_by_category": {}, "courses_updated": [], "error": None}
+    if not _sync_lock.acquire(blocking=False):
+        print("[sync] Синхронізація вже виконується, пропускаємо.")
+        return {"rag_updated": [], "rag_by_category": {}, "courses_updated": [], "error": "sync_in_progress"}
     try:
+        result = {"rag_updated": [], "rag_by_category": {}, "courses_updated": [], "error": None}
         result["rag_updated"], result["rag_by_category"] = sync_rag_indexes()
         result["courses_updated"] = sync_courses()
     except Exception as e:
         result["error"] = str(e)
         print(f"Ошибка sync: {e}")
+    finally:
+        _sync_lock.release()
     return result
