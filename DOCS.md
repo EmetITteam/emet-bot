@@ -1,45 +1,27 @@
 # EMET Bot — Технічна документація
 
-> Версія: 2.0 | Дата: 2026-03-23 | Мова: Python 3.11
+> Версія: 2.1 | Дата: 2026-03-23 | Мова: Python 3.11
 
 ---
 
-## 1. Вартісна оцінка проекту
-
-### Трудовитрати (розробка з нуля)
+## 1. Трудовитрати розробки
 
 | Модуль | Годин |
 |---|---|
 | Архітектура, БД-схема, Docker-інфра | 20 |
-| Telegram-бот: FSM, хендлери, 8 режимів | 45 |
+| Telegram-бот: FSM, хендлери, 8 режимів | 70 |
 | RAG pipeline (dual-index, OpenAI + Google) | 25 |
-| Intent routing + product/objection detection | 15 |
-| Адмін-панель (Flask, повний CRUD) | 35 |
-| Google Drive auto-sync | 20 |
+| Intent routing + product/objection/competitor detection | 15 |
+| Адмін-панель (Flask, повний CRUD, дашборд) | 50 |
+| Google Drive auto-sync (атомарний swap, race condition fix) | 25 |
 | LMS: курси, теми, тести, прогрес | 25 |
-| Промпти + Sales Coach SOS-логіка | 20 |
-| Моніторинг: cost tracking, backup, дайджести | 10 |
-| Налагодження, деплой, виправлення багів | 25 |
-| **Разом** | **~240 год** |
-
-### Вартість
-
-| Ринок | Ставка | Сума |
-|---|---|---|
-| Україна (senior Python) | $35–50/год | **$8 400 – $12 000** |
-| Захід (freelance/агенція) | $80–120/год | **$19 200 – $28 800** |
-| Готове SaaS-рішення аналог | — | $500–1500/міс (без кастомізації) |
-
-**Висновок:** кастомний продукт під специфіку EMET, з контролем даних і без щомісячної підписки на платформу. Окупність — від 6 місяців при 10+ активних менеджерах.
-
-### Поточні операційні витрати (щомісяць)
-
-| Стаття | Сума |
-|---|---|
-| VPS сервер (4 CPU / 8 GB) | $30–60 |
-| OpenAI API (gpt-4o + gpt-4o-mini) | $20–100 |
-| Gemini API (fallback, в межах free tier) | $0–20 |
-| **Разом** | **$50–180/міс** |
+| Промпти + Sales Coach SOS-логіка + ітерації якості | 30 |
+| Моніторинг: cost tracking, backup, дайджести, feedback | 15 |
+| Безпека: brute-force → PG, credentials → env, chat history → PG | 10 |
+| Налагодження, деплой, виправлення багів | 45 |
+| Тести (test_coach.py, tests/test_routing.py) | 8 |
+| Документація | 5 |
+| **Разом** | **~343 год** |
 
 ---
 
@@ -214,6 +196,19 @@ UNIQUE(user_id, item_id)
 ### `chat_histories` — історія діалогів (виживає після рестарту)
 ```sql
 user_id TEXT PK, history_json TEXT, updated_at TIMESTAMP
+```
+
+### `feedback` — оцінки відповідей (👍/👎)
+```sql
+id SERIAL PK, log_id INTEGER, user_id TEXT,
+rating INTEGER,  -- 1 = позитивна, -1 = негативна
+mode TEXT, created_at TIMESTAMP
+```
+
+### `admin_login_attempts` — brute-force захист адмінки (PostgreSQL)
+```sql
+ip TEXT PK, count INTEGER DEFAULT 0, locked_until TIMESTAMP
+-- блокування на 5 хв після 5 невдалих спроб, виживає після рестарту
 ```
 
 ---
