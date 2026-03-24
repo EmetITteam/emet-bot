@@ -1097,7 +1097,9 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
     # Детекція конкурентів — збагачує контекст для порівняльних аргументів
     _COMPETITORS = ["radiesse", "радіесс", "sculptra", "скульптра", "juvederm", "ювідерм",
                     "teosyal", "теосял", "restylane", "рестилайн", "rejuran", "реджуран",
-                    "aesthefill", "естефіл", "pdrn", "пдрн"]
+                    "aesthefill", "естефіл", "pdrn", "пдрн", "plinest", "плінест",
+                    "nucleofill", "нуклеофіл", "mastelli", "мастеллі", "cellular matrix",
+                    "benev", "jalupro", "regenyal"]
     _detected_competitor = next((c for c in _COMPETITORS if c in t_lower), None)
     if not _detected_competitor and chat_history:
         for _m in reversed([m for m in chat_history if m["role"] == "user"][-3:]):
@@ -1105,12 +1107,33 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
             if _detected_competitor:
                 break
 
+    # Детектор конкурентного запиту — "конкуренти X", "X vs Y", "чим відрізняється X"
+    _COMPETITOR_QUERY_KW = [
+        "конкурент", "competitor", "відрізняєть", "відмінність", "порівняй", "порівняння",
+        " vs ", "проти ", "чим кращ", "кращ за", "краще ніж", "аналог"
+    ]
+    _is_competitor_query = any(kw in t_lower for kw in _COMPETITOR_QUERY_KW)
+
+    # Таблиця конкурентів по препарату — для розширення search_query
+    _PRODUCT_COMPETITOR_HINTS = {
+        "Vitaran":  "Rejuran Healer Plinest Nucleofill Mastelli PDRN порівняння аргументи",
+        "Ellansé":  "Radiesse Sculptra Juvederm Voluma порівняння аргументи",
+        "Petaran":  "Sculptra AestheFill PLLA порівняння аргументи",
+        "Neuramis": "Juvederm Teosyal Restylane філери HA порівняння аргументи",
+        "EXOXE":    "PRP плазмотерапія PDRN Rejuran екзосоми порівняння",
+        "IUSE Collagen": "скінбустер бустер колаген порівняння",
+        "ESSE":     "космецевтика пробіотик лінійка показання",
+        "Magnox":   "магній колаген показання",
+    }
+
     # Збагачуємо search_query продуктом — щоб RAG шукав по потрібному препарату, а не random
     if _canonical and mode_key == "coach":
         if _is_script_request or _is_coach_followup:
             search_query = f"скрипт аргументи заперечення діалог {_canonical}"
-        elif _has_objection and _detected_competitor:
-            search_query = f"порівняння конкурент {_canonical} {_detected_competitor} аргументи"
+        elif _is_competitor_query or (_has_objection and _detected_competitor):
+            # Конкурентний запит — явно вказуємо назви конкурентів для RAG
+            _comp_hint = _PRODUCT_COMPETITOR_HINTS.get(_canonical, "конкуренти порівняння аргументи")
+            search_query = f"{_canonical} {_comp_hint}"
         elif _has_objection:
             search_query = f"заперечення {_canonical} {search_query or text}"
         elif _canonical.lower() not in (search_query or "").lower():
