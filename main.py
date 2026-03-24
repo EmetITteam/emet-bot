@@ -954,12 +954,31 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
     if _combo_from_button:
         await state.update_data(combo_mode=False)
 
+    # Ранній детектор назв препаратів EMET — якщо є назва продукту → завжди coach, без LLM
+    # Охоплює: "що таке нейрамис", "розкажи про эссе", "витаран vs конкуренти" і т.д.
+    _EMET_PRODUCT_NAMES_EARLY = [
+        "ellanse", "elanse", "еланс", "елансе", "элансе", "эллансе",
+        "neuramis", "нейрамис", "нейраміс",
+        "vitaran", "вітаран", "витаран",
+        "petaran", "петаран",
+        "exoxe", "ексоксе", "экзокс",
+        "esse", "эссе", "ессе",
+        "iuse", "айюз",
+        "magnox", "магнокс",
+        "neuronox", "нейронокс",
+        "pdrn", "пдрн", "pcl",
+    ]
+    _has_emet_product_early = any(p in _t_lower_early for p in _EMET_PRODUCT_NAMES_EARLY)
+
     _search_query_ready = None  # буде заповнено паралельно якщо пройдемо через else
     if _combo_from_button or _is_combo_query:
         mode_key = "combo"
     elif _is_operational_early:
         mode_key = "operational"
     elif (_is_script_early or _is_coach_followup) and chat_history:
+        mode_key = "coach"
+    elif _has_emet_product_early:
+        # Будь-який запит що містить назву препарату EMET → coach (навіть без сесії)
         mode_key = "coach"
     else:
         # detect_intent і prepare_search_query запускаємо паралельно — економія ~300ms
