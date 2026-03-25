@@ -973,12 +973,12 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
     _search_query_ready = None  # буде заповнено паралельно якщо пройдемо через else
     if _combo_from_button or _is_combo_query:
         mode_key = "combo"
+    elif _has_emet_product_early:
+        # Назва EMET-препарату → завжди coach (навіть якщо є "семінар", "документи" тощо)
+        mode_key = "coach"
     elif _is_operational_early:
         mode_key = "operational"
     elif (_is_script_early or _is_coach_followup) and chat_history:
-        mode_key = "coach"
-    elif _has_emet_product_early:
-        # Будь-який запит що містить назву препарату EMET → coach (навіть без сесії)
         mode_key = "coach"
     else:
         # detect_intent і prepare_search_query запускаємо паралельно — економія ~300ms
@@ -1066,6 +1066,7 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
     # _SCRIPT_KEYWORDS визначений вище і переюзається тут
     t_lower = t
     _detected_product = next((p for p in _EMET_PRODUCTS if p in t_lower), None)
+    _all_detected_products = [p for p in _EMET_PRODUCTS if p in t_lower]
     _has_objection = any(kw in t_lower for kw in _OBJECTION_KEYWORDS)
     _is_script_request = any(kw in t_lower for kw in _SCRIPT_KEYWORDS)
 
@@ -1093,6 +1094,9 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
         _canonical = _PRODUCT_CANONICAL.get(_detected_product, _detected_product)
     else:
         _canonical = None
+    _all_canonicals = list(dict.fromkeys(
+        _PRODUCT_CANONICAL.get(p, p) for p in _all_detected_products
+    ))
 
     # Детекція конкурентів — збагачує контекст для порівняльних аргументів
     _COMPETITORS = ["radiesse", "радіесс", "sculptra", "скульптра", "juvederm", "ювідерм",
@@ -1129,8 +1133,16 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
 
     # Збагачуємо search_query продуктом — щоб RAG шукав по потрібному препарату, а не random
     if _canonical and mode_key == "coach":
-        if _is_script_request or _is_coach_followup:
+        _INFO_FOLLOWUP_KW = ["що таке", "что такое", "розкажи", "расскажи", "чим відрізняєть", "чем отличается"]
+        if _is_script_request or (_is_coach_followup and not any(kw in t_lower for kw in _INFO_FOLLOWUP_KW)):
             search_query = f"скрипт аргументи заперечення діалог {_canonical}"
+        elif len(_all_canonicals) > 1 and not _is_competitor_query:
+            # Кілька EMET-продуктів в одному запиті — об'єднуємо назви + підказки для RAG
+            _multi_hints = " ".join(
+                _PRODUCT_COMPETITOR_HINTS.get(c, "")
+                for c in _all_canonicals if c in _PRODUCT_COMPETITOR_HINTS
+            )
+            search_query = (" ".join(_all_canonicals) + " лінійка відмінність " + _multi_hints).strip()
         elif _is_competitor_query or (_has_objection and _detected_competitor):
             # Конкурентний запит — явно вказуємо назви конкурентів для RAG
             _comp_hint = _PRODUCT_COMPETITOR_HINTS.get(_canonical, "конкуренти порівняння аргументи")
