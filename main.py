@@ -896,6 +896,8 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
         "зіграй діалог", "покажи діалог", "покажи диалог",
         "конкретный диалог", "конкретний діалог",
         "пример диалога", "приклад діалогу",
+        # Семінар по [продукту] = запит на скрипт запрошення
+        "семінар по", "семинар по",
     ]
     _t_lower_early = text.lower().strip()
     _is_script_early = any(kw in _t_lower_early for kw in _SCRIPT_KEYWORDS)
@@ -1134,7 +1136,10 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
     # Збагачуємо search_query продуктом — щоб RAG шукав по потрібному препарату, а не random
     if _canonical and mode_key == "coach":
         _INFO_FOLLOWUP_KW = ["що таке", "что такое", "розкажи", "расскажи", "чим відрізняєть", "чем отличается"]
-        if _is_script_request or (_is_coach_followup and not any(kw in t_lower for kw in _INFO_FOLLOWUP_KW)):
+        _is_seminar_req = any(kw in t_lower for kw in ["семінар", "семинар"])
+        if _is_script_request and _is_seminar_req:
+            search_query = f"скрипт запрошення семінар захід {_canonical}"
+        elif _is_script_request or (_is_coach_followup and not any(kw in t_lower for kw in _INFO_FOLLOWUP_KW)):
             search_query = f"скрипт аргументи заперечення діалог {_canonical}"
         elif len(_all_canonicals) > 1 and not _is_competitor_query:
             # Кілька EMET-продуктів в одному запиті — об'єднуємо назви + підказки для RAG
@@ -1162,7 +1167,16 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
         )
     elif mode_key == "coach" and _is_script_request and _canonical:
         # Запит на скрипт/діалог
-        if _history_objection:
+        _is_seminar_script = any(kw in t_lower for kw in ["семінар", "семинар"])
+        if _is_seminar_script:
+            llm_user_text = (
+                f"[СИСТЕМА: продукт — {_canonical}. "
+                f"Дай SOS-скрипт запрошення лікаря на семінар по {_canonical}: "
+                f"відкриваюче питання + 3-4 гілки (час/зайнятість, 'і так знаю', незручно, 'не потрібно') + ультра-версія 10 сек. "
+                f"Формат: ⚡ SOS-скрипт з 💬 Крок 1 → 💬 Крок 2 → 🎯 Суть → ультра-версія.]\n\n"
+                f"ПИТАННЯ:\n{text}"
+            )
+        elif _history_objection:
             llm_user_text = (
                 f"[СИСТЕМА: продукт — {_canonical}. "
                 f"Дай скрипт-діалог менеджера з лікарем. "
