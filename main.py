@@ -1115,9 +1115,11 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
     _is_competitor_query = any(kw in t_lower for kw in _COMPETITOR_QUERY_KW)
 
     # Таблиця конкурентів по препарату — для розширення search_query
+    # Тільки задокументовані конкуренти (є в ChromaDB з порівняльними даними)
+    # НЕ додавати TWAC/Pluryal — вони згадані лише в списках, без порівняльних розділів
     _PRODUCT_COMPETITOR_HINTS = {
-        "Vitaran":  "Rejuran Healer Plinest Nucleofill Mastelli PDRN порівняння аргументи",
-        "Ellansé":  "Radiesse Sculptra Juvederm Voluma порівняння аргументи",
+        "Vitaran":  "Rejuran Healer KIARA REJU Plinest Nucleofill Mastelli PDRN порівняння концентрація аргументи",
+        "Ellansé":  "Radiesse Sculptra Juvederm Voluma PCL порівняння аргументи",
         "Petaran":  "Sculptra AestheFill PLLA порівняння аргументи",
         "Neuramis": "Juvederm Teosyal Restylane філери HA порівняння аргументи",
         "EXOXE":    "PRP плазмотерапія PDRN Rejuran екзосоми порівняння",
