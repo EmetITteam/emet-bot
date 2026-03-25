@@ -780,7 +780,7 @@ def get_context(query, mode="kb", provider="openai"):
 
     if mode == "combo":
         return _extract_docs(vdb.similarity_search(query, k=15, filter={"category": "combo"}))
-    k = 20 if mode in ("coach",) else 25
+    k = 30 if mode in ("coach",) else 25
     return _extract_docs(vdb.similarity_search(query, k=k))
 
 
@@ -1115,10 +1115,9 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
     _is_competitor_query = any(kw in t_lower for kw in _COMPETITOR_QUERY_KW)
 
     # Таблиця конкурентів по препарату — для розширення search_query
-    # Тільки задокументовані конкуренти (є в ChromaDB з порівняльними даними)
-    # НЕ додавати TWAC/Pluryal — вони згадані лише в списках, без порівняльних розділів
+    # Задокументовані конкуренти (всі мають окремі розділи "Конкурентний аналіз" в ChromaDB)
     _PRODUCT_COMPETITOR_HINTS = {
-        "Vitaran":  "Rejuran Healer KIARA REJU Plinest Nucleofill Mastelli PDRN порівняння концентрація аргументи",
+        "Vitaran":  "Rejuran KIARA TWAC Pluryal Plinest Nucleofill PDRN порівняння конкурентний аналіз концентрація сировина",
         "Ellansé":  "Radiesse Sculptra Juvederm Voluma PCL порівняння аргументи",
         "Petaran":  "Sculptra AestheFill PLLA порівняння аргументи",
         "Neuramis": "Juvederm Teosyal Restylane філери HA порівняння аргументи",
