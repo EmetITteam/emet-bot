@@ -1205,8 +1205,13 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
                 f"ПИТАННЯ:\n{text}"
             )
         else:
+            # Якщо лікар вже працює з конкурентом — підкреслюємо що EMET-препарат доповнює, не замінює
+            _competitor_ctx = (
+                f" Лікар вже працює з {_detected_competitor.title()} — підкресли що {_canonical} ДОПОВНЮЄ портфель, не замінює {_detected_competitor.title()}. Не критикуй {_detected_competitor.title()}."
+                if _detected_competitor else ""
+            )
             llm_user_text = (
-                f"[СИСТЕМА: продукт — {_canonical}. Дай скрипт-діалог менеджера з лікарем.]\n\n"
+                f"[СИСТЕМА: продукт — {_canonical}. Дай скрипт-діалог менеджера з лікарем.{_competitor_ctx}]\n\n"
                 f"ПИТАННЯ:\n{text}"
             )
     elif mode_key == "coach" and _is_coach_followup:
