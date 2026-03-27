@@ -1128,8 +1128,8 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
     # Задокументовані конкуренти (всі мають окремі розділи "Конкурентний аналіз" в ChromaDB)
     _PRODUCT_COMPETITOR_HINTS = {
         "Vitaran":  "Rejuran KIARA TWAC Pluryal Plinest Nucleofill PDRN порівняння конкурентний аналіз концентрація сировина",
-        "Ellansé":  "Radiesse Sculptra Juvederm Voluma PCL порівняння аргументи",
-        "Petaran":  "Sculptra AestheFill PLLA порівняння аргументи",
+        "Ellansé":  "Radiesse Sculptra Juvederm Juvelook Aesthefill полімолочна кислота PCL полікапролактон неоколагенез колаген відмінність порівняння аргументи",
+        "Petaran":  "Sculptra AestheFill Juvelook PLLA полімолочна кислота порівняння аргументи конкуренти",
         "Neuramis": "Juvederm Teosyal Restylane філери HA порівняння аргументи",
         "EXOXE":    "PRP плазмотерапія PDRN Rejuran екзосоми порівняння",
         "IUSE Collagen": "скінбустер бустер колаген порівняння",
@@ -1161,12 +1161,29 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
         elif _canonical.lower() not in (search_query or "").lower():
             search_query = f"{_canonical} {search_query or text}"
 
+    # Ellansé конкурентний запит — явно вказуємо PCL як перший аргумент
+    _is_ellanse_competitor = (
+        _canonical == "Ellansé"
+        and (_is_competitor_query or _detected_competitor or any(
+            kw in t_lower for kw in ["полімолочн", "полимолочн", "juvelook", "radiesse", "sculptra", "відрізняєть", "отличается"]
+        ))
+    )
+
     if mode_key == "coach" and _detected_product and _has_objection and not _is_script_request and not _is_coach_followup:
         # Заперечення + продукт → SOS-формат (тільки якщо НЕ запит на скрипт/діалог)
         llm_user_text = (
             f"[СИСТЕМА: продукт — {_canonical}. "
             f"Дай SOS-відповідь: коротка готова фраза менеджера + 2-3 тезиси. "
             f"⛔ НЕ починай з аргументу тривалості дії. Перший аргумент — фінансова вигода лікаря або унікальний механізм.]\n\n"
+            f"ПИТАННЯ:\n{text}"
+        )
+    elif mode_key == "coach" and _is_ellanse_competitor:
+        # Ellansé vs конкурент — підказуємо LLM що PCL є головним диференціатором
+        llm_user_text = (
+            f"[СИСТЕМА: продукт — Ellansé (PCL — полікапролактон). "
+            f"Порівнюючи з конкурентом, ПЕРШИЙ аргумент — механізм PCL: негайний об'єм (CMC-гель) + неоколагенез I типу (PCL-мікросфери). "
+            f"Якщо конкурент — полімолочна кислота (Juvelook, Aesthefill, PLLA): підкресли що Ellansé = об'єм + ліфтинг одночасно, а не лише біостимуляція. "
+            f"Якщо Radiesse: Ellansé дає програмований термін дії (S/M), без ризику міграції кальцію.]\n\n"
             f"ПИТАННЯ:\n{text}"
         )
     elif mode_key == "coach" and _is_script_request and _canonical:
