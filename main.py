@@ -942,13 +942,27 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
     _AFFIRMATION_KEYWORDS = [
         "хочу", "так", "да", "ок", "добре", "хорошо", "ага", "угу",
         "потрібно", "нужно", "давай", "продовж", "продолжай", "далі", "більше", "ще", "ещё",
+        "є", "есть", "нет", "ні", "зрозуміло", "понятно", "дякую", "спасибо", "окей", "okay",
     ]
+    _t_clean_aff = _t_lower_early.rstrip("!?.")
     _is_short_affirmation = (
-        len(_t_lower_early.split()) <= 3
+        len(_t_lower_early.split()) <= 4
         and chat_history
-        and any(_t_lower_early == kw or _t_lower_early.startswith(kw + " ") for kw in _AFFIRMATION_KEYWORDS)
+        and any(_t_clean_aff == kw or _t_clean_aff.startswith(kw + " ") or _t_clean_aff.endswith(" " + kw) for kw in _AFFIRMATION_KEYWORDS)
     )
-    if _is_short_affirmation:
+    # Риторичні/розмовні питання в середині активної сесії — це продовження діалогу, а не KB-запит
+    # Приклад: "Почему ты сразу мне так не написал?" — 8 слів, але явне продовження coach-сесії
+    _RHETORICAL_MID_SESSION = [
+        "почему ты", "зачем ты", "как так", "чому ти", "чому так", "чому не",
+        "почему не", "як же так", "что значит", "що означає", "навіщо ти",
+        "а чому", "а как", "а чому", "а навіщо",
+    ]
+    _is_mid_session_rhetorical = (
+        chat_history
+        and len(_t_lower_early.split()) <= 10
+        and any(_t_lower_early.startswith(kw) for kw in _RHETORICAL_MID_SESSION)
+    )
+    if _is_short_affirmation or _is_mid_session_rhetorical:
         _is_coach_followup = True
 
     # combo_mode з кнопки — тільки для першого повідомлення, потім скидаємо
@@ -1100,6 +1114,7 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
         _canonical = _PRODUCT_CANONICAL.get(_detected_product, _detected_product)
     else:
         _canonical = None
+    _canonical_from_competitor = False  # прапор: canonical встановлено через детекцію конкурента, а не EMET-продукту
     _all_canonicals = list(dict.fromkeys(
         _PRODUCT_CANONICAL.get(p, p) for p in _all_detected_products
     ))
@@ -1137,6 +1152,27 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
         "Magnox":   "магній колаген показання",
     }
 
+    # Маппінг конкурент → EMET-продукт для запитів типу "Розкажи про лінійку Plinest/Реджуран"
+    # Якщо EMET-продукт не згаданий, але конкурент є → заповнюємо _canonical для правильного RAG
+    _COMPETITOR_TO_CANONICAL = {
+        "plinest": "Vitaran",       "плінест": "Vitaran",
+        "rejuran": "Vitaran",       "реджуран": "Vitaran",
+        "kiara": "Vitaran",         "twac": "Vitaran",
+        "nucleofill": "Vitaran",    "нуклеофіл": "Vitaran",
+        "sculptra": "Petaran",      "скульптра": "Petaran",
+        "aesthefill": "Petaran",    "естефіл": "Petaran",
+        "juvelook": "Petaran",
+        "radiesse": "Ellansé",      "радіесс": "Ellansé",
+        "juvederm": "Neuramis",     "ювідерм": "Neuramis",
+        "teosyal": "Neuramis",      "теосял": "Neuramis",
+        "restylane": "Neuramis",    "рестилайн": "Neuramis",
+    }
+    if not _canonical and _detected_competitor and mode_key == "coach":
+        _mapped = _COMPETITOR_TO_CANONICAL.get(_detected_competitor)
+        if _mapped:
+            _canonical = _mapped
+            _canonical_from_competitor = True
+
     # Збагачуємо search_query продуктом — щоб RAG шукав по потрібному препарату, а не random
     if _canonical and mode_key == "coach":
         _INFO_FOLLOWUP_KW = ["що таке", "что такое", "розкажи", "расскажи", "чим відрізняєть", "чем отличается"]
@@ -1152,6 +1188,10 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
                 for c in _all_canonicals if c in _PRODUCT_COMPETITOR_HINTS
             )
             search_query = (" ".join(_all_canonicals) + " лінійка відмінність " + _multi_hints).strip()
+        elif _canonical_from_competitor:
+            # Запит про конкурентний продукт без згадки EMET — беремо всі конкурентні матеріали EMET-продукту
+            _comp_hint = _PRODUCT_COMPETITOR_HINTS.get(_canonical, "конкуренти порівняння аргументи")
+            search_query = f"{_detected_competitor} {_canonical} {_comp_hint}"
         elif _is_competitor_query or (_has_objection and _detected_competitor):
             # Конкурентний запит — явно вказуємо назви конкурентів для RAG
             _comp_hint = _PRODUCT_COMPETITOR_HINTS.get(_canonical, "конкуренти порівняння аргументи")
@@ -1215,6 +1255,18 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
                 f"[СИСТЕМА: продукт — {_canonical}. Дай скрипт-діалог менеджера з лікарем.{_competitor_ctx}]\n\n"
                 f"ПИТАННЯ:\n{text}"
             )
+    elif mode_key == "coach" and _canonical_from_competitor and not _is_script_request and not _has_objection:
+        # Запит про конкурентний продукт без EMET-продукту в тексті ("Розкажи про лінійку Plinest/Реджуран")
+        # Даємо нейтральний фактаж + закриваємо на диференціацію EMET
+        llm_user_text = (
+            f"[СИСТЕМА: запит — інформація про конкурента '{_detected_competitor}' (наш конкурент). "
+            f"ФОРМАТ відповіді: "
+            f"1) Нейтральний фактаж з контексту: склад, механізм, для кого. "
+            f"БЕЗ позитивних оцінок ('чудові результати', 'ефективний', 'популярний') — не продаємо конкурента. "
+            f"Якщо є лише часткові дані — скажи 'У нашому конкурентному аналізі є такі дані: ...' і дай те що є. "
+            f"2) Плавний перехід: 'А ось чим наш {_canonical} відрізняється...' + 2-3 ключові переваги з контексту.]\n\n"
+            f"ПИТАННЯ:\n{text}"
+        )
     elif mode_key == "coach" and _is_coach_followup:
         # Продовження тренінгу — "інші аргументи", "розпиши детально"
         # Визначаємо що вже відкинув лікар (щоб не повторювати)
