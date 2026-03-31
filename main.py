@@ -9,7 +9,7 @@ import time
 from collections import deque
 from datetime import datetime
 import sync_manager
-from openai import AsyncOpenAI
+from openai import AsyncOpenAI, RateLimitError as OpenAIRateLimitError
 from google import genai
 from googleapiclient.http import MediaIoBaseDownload
 import anthropic
@@ -134,6 +134,8 @@ def check_rate_limit(user_id: int) -> bool:
         return False
     dq.append(now)
     return True
+
+_openai_quota_exceeded = False  # флаг: OpenAI закончился баланс → не дёргать повторно до рестарта
 
 client_openai = AsyncOpenAI(api_key=OPENAI_KEY)
 client_google = genai.Client(api_key=GEMINI_KEY)
@@ -1310,8 +1312,9 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
     # Отправляем placeholder — пользователь сразу видит что бот думает
     sent_msg = await message.answer("⏳")
 
+    global _openai_quota_exceeded
     _openai_attempts = 0
-    while _openai_attempts < 2 and answer is None:
+    while _openai_attempts < 2 and answer is None and not _openai_quota_exceeded:
         _openai_attempts += 1
         try:
             loop = asyncio.get_running_loop()
@@ -1348,9 +1351,45 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
                     _tokens_out = chunk.usage.completion_tokens
             answer = "".join(chunks)
             _model_used = _model
+            if _openai_quota_exceeded:
+                # Баланс поповнено і OpenAI знову відповів — сповіщаємо адміна
+                _openai_quota_exceeded = False
+                if ADMIN_ID:
+                    try:
+                        await bot.send_message(
+                            ADMIN_ID,
+                            "✅ *OpenAI баланс поповнено!*\n\nБот повернувся на OpenAI.",
+                            parse_mode="Markdown",
+                        )
+                    except Exception:
+                        pass
+            else:
+                _openai_quota_exceeded = False
         except Exception as e_openai:
+            err_str = str(e_openai)
             print(f"OpenAI спроба {_openai_attempts}: {e_openai}")
-            if _openai_attempts < 2:
+            # Якщо закінчився баланс — ретрай безглуздий, одразу на Gemini + сповіщаємо адміна
+            _is_quota_error = (
+                isinstance(e_openai, OpenAIRateLimitError)
+                or "insufficient_quota" in err_str
+                or "exceeded your current quota" in err_str
+            )
+            if _is_quota_error:
+                _openai_quota_exceeded = True
+                print("OpenAI quota exceeded — falling back to Gemini")
+                if ADMIN_ID:
+                    try:
+                        await bot.send_message(
+                            ADMIN_ID,
+                            "⚠️ *OpenAI баланс вичерпано!*\n\n"
+                            "Бот автоматично переключився на Gemini.\n"
+                            "Поповни баланс: https://platform.openai.com/account/billing",
+                            parse_mode="Markdown",
+                        )
+                    except Exception:
+                        pass
+                break  # не ретраїти, одразу fallback
+            elif _openai_attempts < 2:
                 await asyncio.sleep(1)
 
     if answer is None:
