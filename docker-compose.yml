@@ -23,6 +23,7 @@ services:
     build: .
     container_name: emet_bot_app
     restart: always
+    stop_grace_period: 10s
     env_file:
       - .env
     environment:
@@ -45,6 +46,7 @@ services:
     build: .
     container_name: emet_admin_panel
     restart: always
+    stop_grace_period: 10s
     command: python admin_panel.py
     env_file:
       - .env

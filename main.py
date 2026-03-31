@@ -6,6 +6,7 @@ import db
 import base64
 import random
 import time
+import logging
 from collections import deque
 from datetime import datetime
 import sync_manager
@@ -145,6 +146,26 @@ MODEL_OPENAI = "gpt-4o-mini"
 MODEL_OPENAI_COACH = "gpt-4o"
 MODEL_GOOGLE = "gemini-2.0-flash"
 MODEL_CLAUDE = "claude-sonnet-4-6"
+
+# --- LOGGING ---
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+    datefmt="%Y-%m-%d %H:%M:%S",
+)
+logger = logging.getLogger("emet_bot")
+
+# --- RAG & LLM CONSTANTS ---
+RAG_K_COACH            = 30    # chunks returned for coach/combo queries
+RAG_K_DEFAULT          = 25    # chunks for kb/cases/operational/certs
+RAG_K_COMBO            = 15    # chunks for combo with category filter
+LLM_TIMEOUT            = 60    # seconds timeout for all LLM API calls
+LLM_INTENT_MAX_TOKENS  = 10    # detect_intent classifier output
+LLM_QUERY_MAX_TOKENS   = 60    # prepare_search_query output
+LLM_CLAUDE_MAX_TOKENS  = 1024  # Claude fallback response
+STREAM_UPDATE_INTERVAL = 0.8   # seconds between streaming message edits
+CHAT_HISTORY_COACH     = 6     # max messages in coach history (3 exchanges)
+CHAT_HISTORY_DEFAULT   = 4     # max messages for other modes (2 exchanges)
 
 bot = Bot(token=TOKEN)
 dp = Dispatcher()
@@ -340,7 +361,7 @@ def _save_chat_history_db(user_id: int, history: list):
             (str(user_id), json.dumps(history, ensure_ascii=False))
         )
     except Exception as e:
-        print(f"[history] DB save error: {e}")
+        logger.error("history DB save error: %s", e)
 
 
 def seed_vitaran_course():
@@ -508,7 +529,7 @@ def seed_vitaran_course():
                         )
 
             total_q = sum(len(t["questions"]) for t in topics_data)
-            print(f"Демо-курс 'Vitaran' завантажено: {len(topics_data)} теми, {total_q} питань")
+            logger.info("Demo course 'Vitaran' loaded: %d topics, %d questions", len(topics_data), total_q)
 
 
 def seed_onboarding():
@@ -553,7 +574,7 @@ def seed_onboarding():
         "INSERT INTO onboarding_items (day, order_num, title, description, item_type) VALUES (%s,%s,%s,%s,%s)",
         items
     )
-    print(f"Онбординг-чеклист завантажено: {len(items)} пунктів")
+    logger.info("Onboarding checklist loaded: %d items", len(items))
 
 
 # --- 5b. ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ БД ---
@@ -567,7 +588,7 @@ def log_to_db(user_id, username, mode, ai_engine, question, answer, has_source, 
              mode, ai_engine, question, answer, 1 if has_source else 0, model, tokens_in, tokens_out)
         )
     except Exception as e:
-        print(f"[log] помилка запису в БД: {e}")
+        logger.error("log DB write error: %s", e)
         return 0
 
 
@@ -578,7 +599,7 @@ def save_course(title, json_data):
             (title, json_data, datetime.now().isoformat())
         )
     except Exception as e:
-        print(f"[log] помилка збереження курсу: {e}")
+        logger.error("course save error: %s", e)
 
 
 def get_courses():
@@ -654,7 +675,7 @@ def audit_action(user_id, action: str, details: str = None):
             (str(user_id), action, details)
         )
     except Exception as e:
-        print(f"[audit] помилка запису: {e}")
+        logger.error("audit write error: %s", e)
 
 
 def get_onboarding_items():
@@ -781,8 +802,8 @@ def get_context(query, mode="kb", provider="openai"):
             vdb = _vdb_kb_google
 
     if mode == "combo":
-        return _extract_docs(vdb.similarity_search(query, k=15, filter={"category": "combo"}))
-    k = 30 if mode in ("coach",) else 25
+        return _extract_docs(vdb.similarity_search(query, k=RAG_K_COMBO, filter={"category": "combo"}))
+    k = RAG_K_COACH if mode in ("coach",) else RAG_K_DEFAULT
     return _extract_docs(vdb.similarity_search(query, k=k))
 
 
@@ -812,7 +833,7 @@ async def detect_intent(query: str) -> str:
                 "Отвечай только одним словом: kb, coach, cases, operational или certs."
             )},
             {"role": "user", "content": query}],
-            temperature=0.0, max_tokens=10
+            temperature=0.0, max_tokens=LLM_INTENT_MAX_TOKENS
         )
         result = response.choices[0].message.content.strip().lower()
         return result if result in ("kb", "coach", "cases", "operational", "certs") else "kb"
@@ -832,7 +853,7 @@ async def prepare_search_query(user_query: str) -> str:
                            "Выдай всё одной строкой через пробел. Это нужно для поиска по базе."
             },
             {"role": "user", "content": user_query}],
-            temperature=0.0, max_tokens=60
+            temperature=0.0, max_tokens=LLM_QUERY_MAX_TOKENS
         )
         return response.choices[0].message.content.strip()
     except Exception:
@@ -1308,6 +1329,7 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
     _tokens_out = 0
     _model_used = None
     _context_was_empty = False
+    _t_start = time.monotonic()
 
     # Отправляем placeholder — пользователь сразу видит что бот думает
     sent_msg = await message.answer("⏳")
@@ -1324,7 +1346,7 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
                 _context_was_empty = True
             stream = await client_openai.chat.completions.create(
                 model=_model,
-                timeout=60,
+                timeout=LLM_TIMEOUT,
                 messages=[
                     {"role": "system", "content": SYSTEM_PROMPTS[mode_key]},
                     *chat_history,
@@ -1340,7 +1362,7 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
                 if delta:
                     chunks.append(delta)
                     now = asyncio.get_running_loop().time()
-                    if now - last_edit >= 0.8:
+                    if now - last_edit >= STREAM_UPDATE_INTERVAL:
                         try:
                             await sent_msg.edit_text("".join(chunks))
                         except Exception:
@@ -1367,7 +1389,7 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
                 _openai_quota_exceeded = False
         except Exception as e_openai:
             err_str = str(e_openai)
-            print(f"OpenAI спроба {_openai_attempts}: {e_openai}")
+            logger.warning("OpenAI attempt %d failed: %s", _openai_attempts, e_openai)
             # Якщо закінчився баланс — ретрай безглуздий, одразу на Gemini + сповіщаємо адміна
             _is_quota_error = (
                 isinstance(e_openai, OpenAIRateLimitError)
@@ -1376,7 +1398,7 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
             )
             if _is_quota_error:
                 _openai_quota_exceeded = True
-                print("OpenAI quota exceeded — falling back to Gemini")
+                logger.warning("OpenAI quota exceeded — falling back to Gemini")
                 if ADMIN_ID:
                     try:
                         await bot.send_message(
@@ -1414,7 +1436,14 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
                 _tokens_out = getattr(res.usage_metadata, "candidates_token_count", 0) or 0
             _model_used = MODEL_GOOGLE
         except Exception as e_google:
-            print(f"Google недоступен: {e_google}")
+            logger.error("Google Gemini unavailable: %s", e_google)
+            if ADMIN_ID:
+                try:
+                    await bot.send_message(ADMIN_ID,
+                        f"⚠️ *Gemini недоступний!*\n\n`{type(e_google).__name__}: {str(e_google)[:200]}`\n\nБот переключився на Claude.",
+                        parse_mode="Markdown")
+                except Exception:
+                    pass
 
     if answer is None and client_claude:
         ai_used = "Claude"
@@ -1423,8 +1452,8 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
             context, sources = await loop.run_in_executor(None, get_context, search_query, mode_key, "openai")
             claude_msg = await client_claude.messages.create(
                 model=MODEL_CLAUDE,
-                max_tokens=1024,
-                timeout=60,
+                max_tokens=LLM_CLAUDE_MAX_TOKENS,
+                timeout=LLM_TIMEOUT,
                 system=SYSTEM_PROMPTS[mode_key],
                 messages=[
                     *chat_history,
@@ -1436,7 +1465,14 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
             _tokens_out = claude_msg.usage.output_tokens
             _model_used = MODEL_CLAUDE
         except Exception as e_claude:
-            print(f"Claude недоступен: {e_claude}")
+            logger.error("Claude unavailable: %s", e_claude)
+            if ADMIN_ID:
+                try:
+                    await bot.send_message(ADMIN_ID,
+                        f"🚨 *Claude недоступний!*\n\n`{type(e_claude).__name__}: {str(e_claude)[:200]}`\n\nВсі LLM недоступні — бот не відповів на запит.",
+                        parse_mode="Markdown")
+                except Exception:
+                    pass
 
     if answer is None:
         await sent_msg.edit_text("Вибачте, сервери ШІ зараз перевантажені. Спробуйте через хвилину.")
@@ -1469,7 +1505,7 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
         clean_answer = re.sub(r'\[?REF\d+\]?', '', answer).strip()
         chat_history.append({"role": "user", "content": text})
         chat_history.append({"role": "assistant", "content": clean_answer})
-        limit = 6 if mode_key == "coach" else 4
+        limit = CHAT_HISTORY_COACH if mode_key == "coach" else CHAT_HISTORY_DEFAULT
         chat_history = chat_history[-limit:]
         await state.update_data(chat_history=chat_history)
         _save_chat_history_db(message.from_user.id, chat_history)
@@ -1481,7 +1517,15 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
                 f"*Пропуск в базе знаний!*\n@{message.from_user.username} спросил:\n_{text}_"
             )
         except Exception as admin_err:
-            print(f"[log] помилка сповіщення адміна: {admin_err}")
+            logger.error("admin notification error: %s", admin_err)
+
+    _latency = time.monotonic() - _t_start
+    logger.info(
+        "query uid=%s mode=%s model=%s latency=%.1fs ctx_empty=%s tokens_in=%d tokens_out=%d",
+        message.from_user.id, mode_key, _model_used, _latency, _context_was_empty, _tokens_in, _tokens_out
+    )
+    if _context_was_empty:
+        logger.warning("context_was_empty uid=%s mode=%s query=%r", message.from_user.id, mode_key, text[:100])
 
     await send_paginated(message, state, answer, sent_msg=sent_msg)
 
@@ -1613,7 +1657,7 @@ async def send_test_analysis(message: types.Message, wrong_answers: list, score_
         await message.answer(f"📊 *Аналіз результатів*\n\n{analysis}", parse_mode="Markdown")
     except Exception as e:
         # Якщо GPT недоступний — мовчки пропускаємо
-        print(f"[test_analysis] помилка: {e}")
+        logger.error("test_analysis error: %s", e)
 
 
 # --- 9. ТЕЛЕГРАМ ОБРАБОТЧИКИ ---
@@ -1945,7 +1989,7 @@ async def handle_voice(message: types.Message, state: FSMContext):
         await _ask_voice_confirm(message, state, text)
 
     except Exception as e:
-        print(f"[log] помилка розпізнавання голосу: {e}")
+        logger.error("voice recognition error: %s", e)
         await message.answer("Не вдалося обробити голосове повідомлення.")
 
 
@@ -1991,7 +2035,7 @@ async def handle_photo(message: types.Message, state: FSMContext):
         await _ask_voice_confirm(message, state, extracted_query)
 
     except Exception as e:
-        print(f"[log] помилка обробки фото: {e}")
+        logger.error("photo processing error: %s", e)
         await message.answer("Не вдалося обробити зображення. Спробуйте описати запитання текстом.")
 
 
@@ -2237,7 +2281,7 @@ async def handle_feedback(callback: types.CallbackQuery):
         )
         await callback.message.edit_text("Дякую за оцінку!" if rating == 1 else "Зрозуміло, працюємо над покращенням!")
     except Exception as e:
-        print(f"[feedback] error: {e}")
+        logger.error("feedback handler error: %s", e)
     await callback.answer()
 
 
@@ -2838,7 +2882,7 @@ async def daily_cost_task():
                     parse_mode="Markdown"
                 )
         except Exception as e:
-            print(f"[COST] помилка: {e}")
+            logger.error("cost_digest error: %s", e)
 
 
 async def ttl_cleanup_task():
@@ -2855,9 +2899,9 @@ async def ttl_cleanup_task():
             db.execute("DELETE FROM logs WHERE date < %s", (cutoff + " 00:00:00",))
             db.execute("DELETE FROM audit_log WHERE created_at < NOW() - INTERVAL '90 days'")
             db.execute("DELETE FROM deleted_chunks WHERE restore_deadline < NOW()")
-            print(f"[TTL] Очищено логи та кошик старіше 30/90 днів")
+            logger.info("TTL cleanup: deleted logs and trash older than 90 days")
         except Exception as e:
-            print(f"[TTL] помилка: {e}")
+            logger.error("ttl_cleanup error: %s", e)
 
 
 async def weekly_digest_task():
@@ -2929,7 +2973,7 @@ async def weekly_digest_task():
                     pass
 
         except Exception as e:
-            print(f"weekly_digest error: {e}")
+            logger.error("weekly_digest error: %s", e)
 
 
 async def auto_sync_task():
@@ -2937,7 +2981,7 @@ async def auto_sync_task():
     # Первый запуск — через 60 сек после старта (бот уже принимает запросы)
     await asyncio.sleep(60)
     while True:
-        print("Auto-sync: запуск синхронизации Google Drive...")
+        logger.info("Auto-sync: starting Google Drive sync...")
         loop = asyncio.get_running_loop()
         result = await loop.run_in_executor(None, sync_manager.run_sync)
 
@@ -2986,9 +3030,9 @@ async def main():
     await set_bot_commands(bot)
     if os.getenv("AUTO_SYNC_ENABLED", "false").lower() == "true":
         asyncio.create_task(auto_sync_task())
-        print(f"Бот Эмет запущен. Автосинхронизація кожні {sync_manager.SYNC_INTERVAL_SEC // 60} хв.")
+        logger.info("EMET bot started. Auto-sync every %d min.", sync_manager.SYNC_INTERVAL_SEC // 60)
     else:
-        print("Бот Эмет запущен. Автосинхронизация отключена (AUTO_SYNC_ENABLED=false).")
+        logger.info("EMET bot started. Auto-sync disabled (AUTO_SYNC_ENABLED=false).")
     asyncio.create_task(weekly_digest_task())
     asyncio.create_task(ttl_cleanup_task())
     asyncio.create_task(daily_cost_task())
@@ -3039,7 +3083,7 @@ async def handle_error(event: types.ErrorEvent) -> bool:
         )
     except Exception:
         pass
-    print(f"[ERROR] {type(err).__name__}: {err} | {context}")
+    logger.error("[ERROR] %s: %s | %s", type(err).__name__, err, context)
     return True  # True = помилка оброблена, aiogram не ре-рейзить
 
 

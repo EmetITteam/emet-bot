@@ -6,8 +6,21 @@ on:
       - main
 
 jobs:
-  deploy:
+  lint:
+    name: Syntax check
     runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Check Python syntax
+        run: python -m py_compile main.py prompts.py db.py sync_manager.py
+
+  deploy:
+    name: Deploy to server
+    runs-on: ubuntu-latest
+    needs: lint
     steps:
       - name: Deploy via SSH
         uses: appleboy/ssh-action@v1.0.3
