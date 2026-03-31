@@ -362,6 +362,7 @@ BASE_HTML = """
   <a href="/" class="{{ 'active' if active=='dashboard' }}">📊 Дашборд</a>
   <a href="/knowledge" class="{{ 'active' if active=='knowledge' }}">📚 База знаний</a>
   <a href="/users" class="{{ 'active' if active=='users' }}">👥 Пользователи</a>
+  <a href="/learning" class="{{ 'active' if active=='learning' }}">🎓 Навчання</a>
   <a href="/access" class="{{ 'active' if active=='access' }}">🔑 Доступи</a>
   <a href="/digest" class="{{ 'active' if active=='digest' }}">📨 Дайджест</a>
   <a href="/logout" class="logout btn btn-sm btn-outline" style="margin:auto 0 auto auto;color:#fff;border-color:rgba(255,255,255,.4)">Выйти</a>
@@ -1106,6 +1107,186 @@ def users():
 
 
 # ─── Routes: Access (email whitelist) ─────────────────────────────────────────
+
+@app.route("/learning")
+@login_required
+def learning():
+    # Все курсы
+    courses = db_query("SELECT id, title, description FROM courses ORDER BY id")
+
+    # Все темы с кол-вом вопросов
+    topics_all = db_query(
+        "SELECT t.id, t.course_id, t.order_num, t.title, COUNT(q.id) as q_count "
+        "FROM topics t LEFT JOIN questions q ON q.topic_id = t.id "
+        "GROUP BY t.id ORDER BY t.course_id, t.order_num"
+    )
+    topics_by_course = {}
+    for t in topics_all:
+        topics_by_course.setdefault(t["course_id"], []).append(t)
+
+    # Весь прогресс пользователей
+    progress_rows = db_query(
+        "SELECT up.user_id, up.topic_id, up.course_id, up.passed, up.score, up.attempts, up.last_date, "
+        "COALESCE(u.first_name, u.username, up.user_id) as name, u.username "
+        "FROM user_progress up LEFT JOIN users u ON u.user_id = up.user_id "
+        "ORDER BY up.last_date DESC"
+    )
+
+    # Индексируем прогресс: (user_id, topic_id) → row
+    progress_map = {(r["user_id"], r["topic_id"]): r for r in progress_rows}
+
+    # Все уникальные пользователи с прогрессом
+    users_with_progress = {}
+    for r in progress_rows:
+        uid = r["user_id"]
+        if uid not in users_with_progress:
+            users_with_progress[uid] = {"name": r["name"], "username": r["username"]}
+
+    # --- Строим HTML ---
+    # 1. KPI сводка
+    total_attempts = len(progress_rows)
+    total_passed   = sum(1 for r in progress_rows if r["passed"])
+    unique_learners = len(users_with_progress)
+
+    kpi_html = f"""
+<div class='kpi-row' style='grid-template-columns:repeat(3,1fr)'>
+  <div class='kpi'><div class='val'>{len(courses)}</div><div class='lbl'>Курсів в системі</div></div>
+  <div class='kpi'><div class='val'>{unique_learners}</div><div class='lbl'>Активних учнів</div></div>
+  <div class='kpi'><div class='val'>{total_passed}/{total_attempts}</div><div class='lbl'>Тем зараховано / всього спроб</div></div>
+</div>"""
+
+    # 2. Таблиця по курсах — зведення
+    course_summary_rows = ""
+    for c in courses:
+        cid = c["id"]
+        ctopics = topics_by_course.get(cid, [])
+        topic_ids = [t["id"] for t in ctopics]
+        # Скільки унікальних юзерів хоча б щось зробили в цьому курсі
+        learners_in_course = set(r["user_id"] for r in progress_rows if r["course_id"] == cid)
+        # Скільки склали ВСІ теми
+        fully_passed = sum(
+            1 for uid in learners_in_course
+            if all(progress_map.get((uid, tid), {}).get("passed") for tid in topic_ids)
+        )
+        # Середній бал по курсу
+        course_scores = [r["score"] for r in progress_rows if r["course_id"] == cid and r["score"] is not None]
+        avg = round(sum(course_scores) / len(course_scores)) if course_scores else 0
+
+        course_summary_rows += (
+            f"<tr>"
+            f"<td><b>{c['title']}</b></td>"
+            f"<td style='text-align:center'>{len(ctopics)}</td>"
+            f"<td style='text-align:center'>{len(learners_in_course)}</td>"
+            f"<td style='text-align:center'><span style='color:#2e7d32;font-weight:700'>{fully_passed}</span></td>"
+            f"<td style='text-align:center'>{avg}%</td>"
+            f"</tr>"
+        )
+
+    course_table = f"""
+<div class='card'>
+  <h2>📋 Зведення по курсах</h2>
+  <table>
+    <tr>
+      <th>Курс</th>
+      <th style='text-align:center'>Тем</th>
+      <th style='text-align:center'>Учнів розпочали</th>
+      <th style='text-align:center'>Пройшли повністю</th>
+      <th style='text-align:center'>Середній бал</th>
+    </tr>
+    {course_summary_rows or "<tr><td colspan='5' style='text-align:center;color:#aaa;padding:20px'>Даних поки немає</td></tr>"}
+  </table>
+</div>"""
+
+    # 3. Детальна таблиця — по кожному курсу окремо
+    detail_html = ""
+    for c in courses:
+        cid = c["id"]
+        ctopics = topics_by_course.get(cid, [])
+        if not ctopics:
+            continue
+
+        # Заголовки колонок: Учень | Тема1 | Тема2 | ... | Загалом
+        th_topics = "".join(
+            f"<th style='text-align:center;max-width:120px;white-space:normal;font-size:11px'>{t['title'][:30]}</th>"
+            for t in ctopics
+        )
+        th_row = f"<tr><th>Учень</th>{th_topics}<th style='text-align:center'>Загалом</th></tr>"
+
+        # Рядки по учням
+        learners_in_course = set(r["user_id"] for r in progress_rows if r["course_id"] == cid)
+        user_rows_html = ""
+
+        for uid in sorted(learners_in_course):
+            uinfo = users_with_progress.get(uid, {})
+            name = uinfo.get("name") or uid
+            uname = f"@{uinfo['username']}" if uinfo.get("username") else ""
+
+            topic_cells = ""
+            scores = []
+            for t in ctopics:
+                prog = progress_map.get((uid, t["id"]))
+                if prog:
+                    passed = prog["passed"]
+                    score  = prog["score"]
+                    att    = prog["attempts"]
+                    date_s = (prog["last_date"] or "")[:10]
+                    scores.append(score)
+                    color  = "#2e7d32" if passed else "#c62828"
+                    icon   = "✅" if passed else "❌"
+                    topic_cells += (
+                        f"<td style='text-align:center'>"
+                        f"<span style='color:{color};font-weight:700'>{icon} {score}%</span>"
+                        f"<br><span style='font-size:10px;color:#999'>x{att} · {date_s}</span>"
+                        f"</td>"
+                    )
+                else:
+                    topic_cells += "<td style='text-align:center;color:#ccc'>—</td>"
+
+            passed_count = sum(1 for t in ctopics if progress_map.get((uid, t["id"]), {}).get("passed"))
+            avg_u = round(sum(scores) / len(scores)) if scores else 0
+            total_cell = (
+                f"<td style='text-align:center'>"
+                f"<b>{passed_count}/{len(ctopics)}</b>"
+                f"<br><span style='font-size:11px;color:#555'>{avg_u}%</span>"
+                f"</td>"
+            )
+
+            user_rows_html += (
+                f"<tr>"
+                f"<td><b>{name}</b><br><span style='font-size:11px;color:#999'>{uname}</span></td>"
+                f"{topic_cells}"
+                f"{total_cell}"
+                f"</tr>"
+            )
+
+        if not user_rows_html:
+            user_rows_html = f"<tr><td colspan='{len(ctopics)+2}' style='text-align:center;color:#aaa;padding:16px'>Ніхто ще не проходив цей курс</td></tr>"
+
+        detail_html += f"""
+<div class='card'>
+  <h2>🎓 {c['title']}</h2>
+  <p style='font-size:13px;color:#666;margin-bottom:16px'>{c.get('description') or ''}</p>
+  <div style='overflow-x:auto'>
+  <table>
+    {th_row}
+    {user_rows_html}
+  </table>
+  </div>
+</div>"""
+
+    if not detail_html:
+        detail_html = "<div class='card' style='text-align:center;color:#aaa;padding:40px'>Результатів тестів поки немає</div>"
+
+    content = f"""
+<div style='margin-bottom:24px'>
+  <h1 style='font-size:20px;font-weight:800'>🎓 Навчання — прогрес команди</h1>
+</div>
+{kpi_html}
+{course_table}
+{detail_html}
+"""
+    return render_template_string(BASE_HTML, content=content, active="learning")
+
 
 @app.route("/access")
 @login_required
