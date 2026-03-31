@@ -1106,6 +1106,223 @@ def users():
     return render_page(content, active="users")
 
 
+# ─── Routes: Learning (LMS) ───────────────────────────────────────────────────
+
+def _parse_course_xlsx(file_bytes: bytes):
+    """Parse xlsx course file. Returns (title, description, topics_dict, topic_order) or raises ValueError."""
+    import io as _io
+    import re as _re
+    try:
+        from openpyxl import load_workbook as _lw
+    except ImportError:
+        raise ValueError("openpyxl не встановлено")
+
+    wb = _lw(_io.BytesIO(file_bytes), data_only=True)
+
+    if "Курс" not in wb.sheetnames:
+        raise ValueError("Аркуш «Курс» не знайдено. Переконайтесь, що файл у правильному форматі (скачайте шаблон).")
+
+    ws_meta = wb["Курс"]
+    title       = str(ws_meta.cell(2, 2).value or "").strip()
+    description = str(ws_meta.cell(3, 2).value or "").strip()
+    if not title:
+        raise ValueError("Назва курсу порожня (аркуш «Курс», клітинка B2).")
+
+    # Find data sheet: prefer "Теми і тести", fallback to any other non-meta sheet
+    data_sheet = None
+    for candidate in ["Теми і тести", "Теми і тести"]:
+        if candidate in wb.sheetnames:
+            data_sheet = candidate
+            break
+    if data_sheet is None:
+        ignore = {"Курс", "Інструкція", "Приклад"}
+        others = [s for s in wb.sheetnames if s not in ignore]
+        if others:
+            data_sheet = others[0]
+    if data_sheet is None:
+        raise ValueError("Аркуш з темами не знайдено. Потрібен аркуш «Теми і тести».")
+
+    ws = wb[data_sheet]
+    topics = {}
+    topic_order = []
+    last_topic_num = None
+
+    for row_i, row in enumerate(ws.iter_rows(min_row=2, values_only=True), 2):
+        if all(v is None or str(v).strip() == "" for v in row):
+            continue
+
+        raw_num = str(row[0] or "").strip().rstrip(".")
+        if raw_num.isdigit():
+            last_topic_num = int(raw_num)
+        elif last_topic_num is not None:
+            pass  # continue previous topic
+        else:
+            continue
+
+        topic_num   = last_topic_num
+        topic_title = str(row[1] or "").strip().rstrip(",")
+        topic_text  = str(row[2] or "").strip()
+        q_text      = str(row[3] or "").strip()
+        opt1        = str(row[4] or "").strip()
+        opt2        = str(row[5] or "").strip()
+        opt3        = str(row[6] or "").strip()
+        opt4        = str(row[7] or "").strip()
+        correct_raw = str(row[8] or "").strip()
+
+        if topic_num not in topics:
+            if not topic_title:
+                continue
+            topics[topic_num] = {"title": topic_title, "content": "", "questions": []}
+            topic_order.append(topic_num)
+
+        if topic_text:
+            if topics[topic_num]["content"]:
+                topics[topic_num]["content"] += "\n\n" + topic_text
+            else:
+                topics[topic_num]["content"] = topic_text
+
+        if q_text:
+            options = [o for o in [opt1, opt2, opt3, opt4] if o]
+            if len(options) < 2:
+                continue
+            digits = _re.sub(r"[^0-9]", "", correct_raw)
+            if not digits:
+                continue
+            correct_idx = int(digits) - 1
+            if correct_idx < 0 or correct_idx >= len(options):
+                continue
+            topics[topic_num]["questions"].append({
+                "text": q_text,
+                "options": [(opt, i == correct_idx) for i, opt in enumerate(options)],
+            })
+
+    if not topics:
+        raise ValueError("Теми не знайдено. Перевірте аркуш «Теми і тести».")
+
+    return title, description, topics, topic_order
+
+
+def _save_course_to_db(title, description, topics, topic_order):
+    """Insert or overwrite course in DB. Returns (course_id, overwritten: bool)."""
+    from datetime import datetime as _dt
+    overwritten = False
+    with db.get_connection() as conn:
+        with conn.cursor() as cur:
+            cur.execute("SELECT id FROM courses WHERE title=%s", (title,))
+            existing = cur.fetchone()
+            if existing:
+                old_id = existing[0]
+                cur.execute(
+                    "DELETE FROM answer_options WHERE question_id IN "
+                    "(SELECT q.id FROM questions q JOIN topics t ON q.topic_id=t.id WHERE t.course_id=%s)",
+                    (old_id,)
+                )
+                cur.execute("DELETE FROM questions WHERE topic_id IN (SELECT id FROM topics WHERE course_id=%s)", (old_id,))
+                cur.execute("DELETE FROM topics WHERE course_id=%s", (old_id,))
+                cur.execute("DELETE FROM courses WHERE id=%s", (old_id,))
+                overwritten = True
+
+            cur.execute(
+                "INSERT INTO courses (title, description, created_at) VALUES (%s,%s,%s) RETURNING id",
+                (title, description, _dt.now().isoformat())
+            )
+            course_id = cur.fetchone()[0]
+
+            for order, tn in enumerate(topic_order, 1):
+                t = topics[tn]
+                cur.execute(
+                    "INSERT INTO topics (course_id, order_num, title, content) VALUES (%s,%s,%s,%s) RETURNING id",
+                    (course_id, order, t["title"], t["content"])
+                )
+                topic_id = cur.fetchone()[0]
+                for q in t["questions"]:
+                    cur.execute("INSERT INTO questions (topic_id, text) VALUES (%s,%s) RETURNING id", (topic_id, q["text"]))
+                    q_id = cur.fetchone()[0]
+                    for opt_text, is_correct in q["options"]:
+                        cur.execute(
+                            "INSERT INTO answer_options (question_id, text, is_correct) VALUES (%s,%s,%s)",
+                            (q_id, opt_text, 1 if is_correct else 0)
+                        )
+    return course_id, overwritten
+
+
+@app.route("/learning/upload", methods=["POST"])
+@login_required
+def learning_upload():
+    f = request.files.get("file")
+    if not f or not f.filename:
+        flash("Файл не вибрано", "danger")
+        return redirect(url_for("learning"))
+
+    if not f.filename.lower().endswith(".xlsx"):
+        flash("Тільки .xlsx файли підтримуються", "danger")
+        return redirect(url_for("learning"))
+
+    data = f.read()
+    if len(data) > 10 * 1024 * 1024:
+        flash("Файл занадто великий (макс. 10 МБ)", "danger")
+        return redirect(url_for("learning"))
+
+    try:
+        title, description, topics, topic_order = _parse_course_xlsx(data)
+    except ValueError as e:
+        flash(f"❌ Помилка парсингу: {e}", "danger")
+        return redirect(url_for("learning"))
+    except Exception as e:
+        flash(f"❌ Не вдалося прочитати файл: {e}", "danger")
+        return redirect(url_for("learning"))
+
+    try:
+        course_id, overwritten = _save_course_to_db(title, description, topics, topic_order)
+    except Exception as e:
+        flash(f"❌ Помилка запису в БД: {e}", "danger")
+        return redirect(url_for("learning"))
+
+    total_q = sum(len(t["questions"]) for t in topics.values())
+    action = "оновлено" if overwritten else "додано"
+    flash(
+        f"✅ Курс «{title}» {action}: {len(topic_order)} тем, {total_q} питань (id={course_id})",
+        "success"
+    )
+    return redirect(url_for("learning"))
+
+
+@app.route("/learning/course/delete/<int:course_id>", methods=["POST"])
+@login_required
+def learning_course_delete(course_id):
+    row = db_query("SELECT title FROM courses WHERE id=%s", (course_id,), fetchone=True)
+    if not row:
+        flash("Курс не знайдено", "danger")
+        return redirect(url_for("learning"))
+    title = row["title"]
+    try:
+        db_exec(
+            "DELETE FROM answer_options WHERE question_id IN "
+            "(SELECT q.id FROM questions q JOIN topics t ON q.topic_id=t.id WHERE t.course_id=%s)",
+            (course_id,)
+        )
+        db_exec("DELETE FROM questions WHERE topic_id IN (SELECT id FROM topics WHERE course_id=%s)", (course_id,))
+        db_exec("DELETE FROM topics WHERE course_id=%s", (course_id,))
+        db_exec("DELETE FROM courses WHERE id=%s", (course_id,))
+        flash(f"🗑 Курс «{title}» видалено", "success")
+    except Exception as e:
+        flash(f"❌ Помилка видалення: {e}", "danger")
+    return redirect(url_for("learning"))
+
+
+@app.route("/learning/template")
+@login_required
+def learning_template():
+    """Serve course_template.xlsx for download."""
+    import os as _os
+    template_path = _os.path.join(_os.path.dirname(__file__), "course_template.xlsx")
+    if not _os.path.exists(template_path):
+        flash("Файл шаблону не знайдено на сервері", "danger")
+        return redirect(url_for("learning"))
+    return send_file(template_path, as_attachment=True, download_name="course_template.xlsx",
+                     mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
+
+
 # ─── Routes: Access (email whitelist) ─────────────────────────────────────────
 
 @app.route("/learning")
@@ -1161,24 +1378,30 @@ def learning():
         cid = c["id"]
         ctopics = topics_by_course.get(cid, [])
         topic_ids = [t["id"] for t in ctopics]
-        # Скільки унікальних юзерів хоча б щось зробили в цьому курсі
         learners_in_course = set(r["user_id"] for r in progress_rows if r["course_id"] == cid)
-        # Скільки склали ВСІ теми
         fully_passed = sum(
             1 for uid in learners_in_course
             if all(progress_map.get((uid, tid), {}).get("passed") for tid in topic_ids)
         )
-        # Середній бал по курсу
         course_scores = [r["score"] for r in progress_rows if r["course_id"] == cid and r["score"] is not None]
         avg = round(sum(course_scores) / len(course_scores)) if course_scores else 0
 
+        ctitle = c['title']
+        cdesc  = c.get('description', '')[:60]
+        confirm_msg = f"Видалити курс '{ctitle}' та всі результати?"
         course_summary_rows += (
             f"<tr>"
-            f"<td><b>{c['title']}</b></td>"
+            f"<td><b>{ctitle}</b>"
+            f"<br><span style='font-size:11px;color:#999'>{cdesc}</span></td>"
             f"<td style='text-align:center'>{len(ctopics)}</td>"
             f"<td style='text-align:center'>{len(learners_in_course)}</td>"
             f"<td style='text-align:center'><span style='color:#2e7d32;font-weight:700'>{fully_passed}</span></td>"
             f"<td style='text-align:center'>{avg}%</td>"
+            f"<td style='text-align:center'>"
+            f"<form method='post' action='/learning/course/delete/{cid}' style='display:inline' "
+            f"onsubmit='return confirm(\"{confirm_msg}\")'>"
+            f"<button type='submit' class='btn btn-sm btn-danger'>🗑</button></form>"
+            f"</td>"
             f"</tr>"
         )
 
@@ -1192,8 +1415,9 @@ def learning():
       <th style='text-align:center'>Учнів розпочали</th>
       <th style='text-align:center'>Пройшли повністю</th>
       <th style='text-align:center'>Середній бал</th>
+      <th style='text-align:center'>Дії</th>
     </tr>
-    {course_summary_rows or "<tr><td colspan='5' style='text-align:center;color:#aaa;padding:20px'>Даних поки немає</td></tr>"}
+    {course_summary_rows or "<tr><td colspan='6' style='text-align:center;color:#aaa;padding:20px'>Курсів поки немає — завантажте перший!</td></tr>"}
   </table>
 </div>"""
 
@@ -1277,10 +1501,31 @@ def learning():
     if not detail_html:
         detail_html = "<div class='card' style='text-align:center;color:#aaa;padding:40px'>Результатів тестів поки немає</div>"
 
+    upload_card = """
+<div class='card'>
+  <h2>📤 Завантажити курс (.xlsx)</h2>
+  <p style='font-size:13px;color:#666;margin-bottom:16px'>
+    Завантажте файл у форматі Excel-шаблону EMET. Якщо курс з такою назвою вже існує — він буде оновлений автоматично.
+    <a href='/learning/template' style='color:#0f3460;font-weight:600'>⬇ Скачати шаблон</a>
+  </p>
+  <form method='post' action='/learning/upload' enctype='multipart/form-data'>
+    <div style='display:flex;gap:12px;align-items:center;flex-wrap:wrap'>
+      <label class='upload-zone' style='padding:16px 24px;cursor:pointer;flex:1;min-width:240px'>
+        <input type='file' name='file' accept='.xlsx' onchange='this.closest("form").querySelector(".fname").textContent=this.files[0]?.name||""'>
+        <span style='font-size:22px'>📁</span>
+        <span style='display:block;margin-top:4px;font-size:13px;color:#555'>Клікніть або перетягніть .xlsx файл</span>
+        <span class='fname' style='display:block;margin-top:4px;font-size:12px;color:#0f3460;font-weight:600'></span>
+      </label>
+      <button type='submit' class='btn btn-success' style='white-space:nowrap'>✅ Завантажити курс</button>
+    </div>
+  </form>
+</div>"""
+
     content = f"""
 <div style='margin-bottom:24px'>
   <h1 style='font-size:20px;font-weight:800'>🎓 Навчання — прогрес команди</h1>
 </div>
+{upload_card}
 {kpi_html}
 {course_table}
 {detail_html}
