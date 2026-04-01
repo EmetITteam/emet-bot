@@ -2296,9 +2296,41 @@ async def show_courses(callback: types.CallbackQuery, state: FSMContext):
         await callback.answer()
         return
 
+    COURSE_ICONS = {
+        "vitaran":   "🧬",
+        "ellans":    "⏳",
+        "exohe":     "🔬",
+        "exosom":    "🔬",
+        "нейронокс": "💉",
+        "neuronox":  "💉",
+        "petaran":   "🌿",
+        "neuramis":  "💎",
+        "juvederm":  "💠",
+        "radiess":   "✨",
+        "sculptra":  "🕊",
+        "pluryal":   "🫧",
+        "nucleofil": "🧪",
+    }
+
+    def _course_icon(title: str) -> str:
+        t = title.lower()
+        for kw, icon in COURSE_ICONS.items():
+            if kw in t:
+                return icon
+        return "📖"
+
+    def _course_label(title: str) -> str:
+        """Strip common repetitive suffixes for cleaner button text."""
+        for suffix in [" — базовий курс продажів", " — базовий курс", " — курс продажів", " — курс"]:
+            if title.lower().endswith(suffix.lower()):
+                return title[: len(title) - len(suffix)].strip()
+        return title
+
     builder = InlineKeyboardBuilder()
     for c_id, title, _ in courses:
-        builder.button(text=f"📚 {title}", callback_data=f"lms_course_{c_id}")
+        icon = _course_icon(title)
+        label = _course_label(title)
+        builder.button(text=f"{icon}  {label}", callback_data=f"lms_course_{c_id}")
     builder.button(text="⬅️ Головне меню", callback_data="go_home")
     builder.adjust(1)
 
