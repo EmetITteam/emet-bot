@@ -53,6 +53,8 @@ services:
     environment:
       - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
       - TZ=Europe/Kiev
+    volumes:
+      - ./data:/app/data
     ports:
       - "5000:5000"
     depends_on:
