@@ -1323,6 +1323,42 @@ def learning_template():
                      mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
 
+@app.route("/learning/index_courses", methods=["POST"])
+@login_required
+def learning_index_courses():
+    """Index all course topics into ChromaDB RAG."""
+    category = request.form.get("category", "coach")
+    if category not in ("kb", "coach", "both"):
+        category = "coach"
+
+    topics = db_query(
+        "SELECT t.id, t.title, t.content, c.title as course_title "
+        "FROM topics t JOIN courses c ON c.id=t.course_id "
+        "WHERE t.content IS NOT NULL AND length(trim(t.content)) > 50 "
+        "ORDER BY c.id, t.order_num"
+    )
+
+    if not topics:
+        flash("Тем з вмістом не знайдено", "danger")
+        return redirect(url_for("learning"))
+
+    indexed = 0
+    for t in topics:
+        text = f"# {t['course_title']}\n## {t['title']}\n\n{t['content']}"
+        filename = f"[LMS] {t['course_title']} — {t['title']}"
+        ok, _ = index_document(filename, text, source_label="lms_course", uploaded_by="admin_panel", category=category)
+        if ok:
+            indexed += 1
+
+    cat_label = {"kb": "База знань", "coach": "Коуч", "both": "База знань + Коуч"}.get(category, category)
+    flash(
+        f"✅ Відправлено на індексацію {indexed} тем з {len(topics)} у розділ «{cat_label}». "
+        f"Дані з'являться в RAG за кілька хвилин.",
+        "success"
+    )
+    return redirect(url_for("learning"))
+
+
 # ─── Routes: Access (email whitelist) ─────────────────────────────────────────
 
 @app.route("/learning")
@@ -1517,6 +1553,26 @@ def learning():
         <span class='fname' style='display:block;margin-top:4px;font-size:12px;color:#0f3460;font-weight:600'></span>
       </label>
       <button type='submit' class='btn btn-success' style='white-space:nowrap'>✅ Завантажити курс</button>
+    </div>
+  </form>
+</div>
+<div class='card'>
+  <h2>🧠 Додати теми курсів до бази знань (RAG)</h2>
+  <p style='font-size:13px;color:#666;margin-bottom:16px'>
+    Всі теми з навчальних курсів будуть проіндексовані у векторну базу — бот зможе відповідати на запитання
+    про препарати на основі матеріалів з курсів. Оберіть розділ, куди потрапить інформація.
+  </p>
+  <form method='post' action='/learning/index_courses'>
+    <div style='display:flex;gap:12px;align-items:center;flex-wrap:wrap'>
+      <select name='category' class='form-control' style='width:auto;min-width:200px'>
+        <option value='coach'>💼 Sales Коуч (рекомендовано)</option>
+        <option value='kb'>📚 База знань</option>
+        <option value='both'>📚+💼 База знань + Коуч</option>
+      </select>
+      <button type='submit' class='btn btn-primary' style='white-space:nowrap'
+        onclick="return confirm('Проіндексувати всі теми курсів у RAG?')">
+        🔄 Індексувати всі теми курсів
+      </button>
     </div>
   </form>
 </div>"""
