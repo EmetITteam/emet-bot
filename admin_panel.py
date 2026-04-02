@@ -1326,7 +1326,7 @@ def learning_template():
 @app.route("/learning/index_courses", methods=["POST"])
 @login_required
 def learning_index_courses():
-    """Index all course topics into ChromaDB RAG."""
+    """Index all course topics into ChromaDB RAG (single sequential thread)."""
     category = request.form.get("category", "coach")
     if category not in ("kb", "coach", "both"):
         category = "coach"
@@ -1342,18 +1342,58 @@ def learning_index_courses():
         flash("Тем з вмістом не знайдено", "danger")
         return redirect(url_for("learning"))
 
-    indexed = 0
-    for t in topics:
-        text = f"# {t['course_title']}\n## {t['title']}\n\n{t['content']}"
-        filename = f"[LMS] {t['course_title']} — {t['title']}"
-        ok, _ = index_document(filename, text, source_label="lms_course", uploaded_by="admin_panel", category=category)
-        if ok:
-            indexed += 1
+    _INDEX_MAP = {
+        "kb":    [("data/db_index_kb_openai",    "openai"), ("data/db_index_kb_google",    "google")],
+        "coach": [("data/db_index_coach_openai", "openai"), ("data/db_index_coach_google", "google")],
+        "both":  [("data/db_index_kb_openai",    "openai"), ("data/db_index_kb_google",    "google"),
+                  ("data/db_index_coach_openai", "openai"), ("data/db_index_coach_google", "google")],
+    }
+    targets = _INDEX_MAP.get(category, _INDEX_MAP["coach"])
+    topic_list = list(topics)  # snapshot before background thread
+
+    def _index_all():
+        try:
+            from langchain_core.documents import Document
+            from langchain_chroma import Chroma
+            from langchain_openai import OpenAIEmbeddings
+            from langchain_google_genai import GoogleGenerativeAIEmbeddings
+            from langchain_text_splitters import RecursiveCharacterTextSplitter
+
+            splitter = RecursiveCharacterTextSplitter(chunk_size=1500, chunk_overlap=200)
+
+            # Init one instance per target — reuse across all topics
+            vdbs = {}
+            for persist_dir, emb_type in targets:
+                if emb_type == "openai" and OPENAI_KEY:
+                    emb = OpenAIEmbeddings(model="text-embedding-3-small", openai_api_key=OPENAI_KEY)
+                    vdbs[(persist_dir, emb_type)] = Chroma(persist_directory=persist_dir, embedding_function=emb)
+                elif emb_type == "google" and GEMINI_KEY:
+                    emb = GoogleGenerativeAIEmbeddings(model="models/gemini-embedding-001", google_api_key=GEMINI_KEY)
+                    vdbs[(persist_dir, emb_type)] = Chroma(persist_directory=persist_dir, embedding_function=emb)
+
+            ok_count = 0
+            for t in topic_list:
+                text = f"# {t['course_title']}\n## {t['title']}\n\n{t['content']}"
+                filename = f"[LMS] {t['course_title']} — {t['title']}"
+                doc = Document(page_content=text, metadata={
+                    "source": filename, "url": "lms_course", "folder": category
+                })
+                chunks = splitter.split_documents([doc])
+                for key, vdb in vdbs.items():
+                    vdb.add_documents(chunks)
+                ok_count += 1
+                print(f"Indexed LMS topic {ok_count}/{len(topic_list)}: {filename[:60]}")
+
+            print(f"LMS indexation done: {ok_count} topics indexed into {list(vdbs.keys())}")
+        except Exception as e:
+            print(f"LMS index error: {e}")
+
+    threading.Thread(target=_index_all, daemon=True, name="lms-indexer").start()
 
     cat_label = {"kb": "База знань", "coach": "Коуч", "both": "База знань + Коуч"}.get(category, category)
     flash(
-        f"✅ Відправлено на індексацію {indexed} тем з {len(topics)} у розділ «{cat_label}». "
-        f"Дані з'являться в RAG за кілька хвилин.",
+        f"✅ Запущено індексацію {len(topic_list)} тем у розділ «{cat_label}». "
+        f"Дані з'являться в RAG за 2–3 хвилини.",
         "success"
     )
     return redirect(url_for("learning"))
