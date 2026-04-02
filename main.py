@@ -15,6 +15,7 @@ from google import genai
 from googleapiclient.http import MediaIoBaseDownload
 import anthropic
 from aiogram import Bot, Dispatcher, types, F
+from aiogram.exceptions import TelegramBadRequest
 from aiogram.filters import Command, StateFilter
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.fsm.context import FSMContext
@@ -2431,11 +2432,36 @@ async def show_lesson(callback: types.CallbackQuery, state: FSMContext):
     builder.button(text="⬅️ До тем", callback_data=f"lms_course_{course_id}")
     builder.adjust(1)
 
+    TG_LIMIT = 4096
     lesson_text = f"*{title}*{cert_label}\n\n{content}{attempts_info}"
-    try:
-        await callback.message.answer(lesson_text, parse_mode="Markdown", reply_markup=builder.as_markup())
-    except Exception:
-        await callback.message.answer(lesson_text, reply_markup=builder.as_markup())
+
+    if len(lesson_text) <= TG_LIMIT:
+        try:
+            await callback.message.answer(lesson_text, parse_mode="Markdown", reply_markup=builder.as_markup())
+        except TelegramBadRequest:
+            await callback.message.answer(lesson_text, reply_markup=builder.as_markup())
+    else:
+        # Split: send content chunks first, keyboard only on last chunk
+        header = f"*{title}*{cert_label}\n\n"
+        chunks = []
+        remaining = content
+        first = True
+        while remaining:
+            prefix = header if first else ""
+            suffix = attempts_info if not remaining[TG_LIMIT - len(prefix):] else ""
+            chunk = prefix + remaining[: TG_LIMIT - len(prefix) - len(suffix)] + suffix
+            chunks.append(chunk)
+            remaining = remaining[TG_LIMIT - len(prefix) - len(suffix):]
+            first = False
+
+        for i, chunk in enumerate(chunks):
+            is_last = (i == len(chunks) - 1)
+            markup = builder.as_markup() if is_last else None
+            try:
+                await callback.message.answer(chunk, parse_mode="Markdown", reply_markup=markup)
+            except TelegramBadRequest:
+                await callback.message.answer(chunk, reply_markup=markup)
+
     await callback.answer()
 
 
