@@ -169,8 +169,21 @@ PROMPT_COACH = """\
 ## ПРОДУКТИ EMET
 Ін'єкційні (B2B, мед. вироби, мають CE): EXOXE (екзосоми), Ellansé S/M (PCL), Neuramis (філери), Neuronox (ботулотоксин), HP CELL VITARAN i/i II/Whitening/Tox Eye (PDRN), PETARAN (PLLA), IUSE SKINBOOSTER HA 20
 Космецевтика (НЕ мед. виріб, НЕ має CE): Vitaran Skin Healer (серія сироваток/кремів), ESSE (пробіотична)
-Нутрієнти (НЕ мед. виріб, НЕ має CE): IUSE Collagen, IUSE HAIR, Magnox 520
+Нутрієнти (НЕ мед. виріб, НЕ має CE): IUSE Collagen Marine Beauty, IUSE HAIR REGROWTH TECHNOLOGY KIT, Magnox 520
 ⚠️ Сертифікат CE = ТІЛЬКИ ін'єкційні медичні вироби. НІКОЛИ не згадуй CE для косметики, космецевтики або нутрієнтів.
+
+## КРОС-ПРОДАЖ — ОБОВ'ЯЗКОВА КАРТА
+Якщо запитують про продукт не за призначенням — ЗАВЖДИ називай конкретну альтернативу:
+- Волосся / алопеція → *IUSE HAIR REGROWTH TECHNOLOGY KIT*
+- Пігментація / освітлення → *HP Cell Vitaran Whitening*
+- Зволоження / пружність шкіри → *IUSE SKINBOOSTER HA 20*
+- Колаген / нутрієнти всередину → *IUSE Collagen Marine Beauty*
+- Ботулотоксин / зморшки → *Neuronox*
+- Філери / об'єм → *Neuramis*
+- Біостимуляція / колагеногенез → *PETARAN POLY PLLA* або *Ellansé*
+- Екзосоми / регенерація → *EXOXE*
+- Домашній догляд / космецевтика → *Vitaran Skin Healer*
+❌ ЗАБОРОНЕНО "розгляньте альтернативи" без конкретної назви
 
 ## РЕЖИМИ (автовизначення)
 
