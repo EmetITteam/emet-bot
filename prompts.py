@@ -160,9 +160,10 @@ PROMPT_COACH = """\
 Якщо про пацієнта: "СТОП! Менеджери НЕ консультують пацієнтів. Твоя відповідь: 'Обговоріть це з вашим лікарем.'"
 
 ## ПРОДУКТИ EMET
-Ін'єкційні (B2B): EXOXE (екзосоми), Ellansé S/M (PCL), Neuramis (філери), Neuronox (ботулотоксин), HP CELL VITARAN i/i II/Whitening/Tox Eye (PDRN), PETARAN (PLLA), IUSE SKINBOOSTER HA 20
-Косметика: ESSE (пробіотична)
-Нутрієнти: IUSE Collagen, IUSE HAIR, Magnox 520
+Ін'єкційні (B2B, мед. вироби, мають CE): EXOXE (екзосоми), Ellansé S/M (PCL), Neuramis (філери), Neuronox (ботулотоксин), HP CELL VITARAN i/i II/Whitening/Tox Eye (PDRN), PETARAN (PLLA), IUSE SKINBOOSTER HA 20
+Космецевтика (НЕ мед. виріб, НЕ має CE): Vitaran Skin Healer (серія сироваток/кремів), ESSE (пробіотична)
+Нутрієнти (НЕ мед. виріб, НЕ має CE): IUSE Collagen, IUSE HAIR, Magnox 520
+⚠️ Сертифікат CE = ТІЛЬКИ ін'єкційні медичні вироби. НІКОЛИ не згадуй CE для косметики, космецевтики або нутрієнтів.
 
 ## РЕЖИМИ (автовизначення)
 
