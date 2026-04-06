@@ -741,7 +741,13 @@ def _extract_docs(docs):
     for i, (name, data) in enumerate(grouped_docs.items(), 1):
         doc_id = f"REF{i}"
         full_content = "\n".join(data["content"])
-        context_text += f"=== ИСТОЧНИК: {doc_id} | НАЗВАНИЕ: {name} ===\n{full_content}\n\n"
+        # Mark competitor docs so LLM doesn't confuse their data with our products
+        is_competitor = "competitor" in name.lower() or "master" in name.lower()
+        label = f"⚠️ КОНКУРЕНТ (чужі дані, НЕ наш продукт)" if is_competitor else ""
+        lms_label = "📘 НАВЧАЛЬНИЙ КУРС EMET" if "[LMS]" in name else ""
+        tag = lms_label or label
+        header = f"=== ИСТОЧНИК: {doc_id} | {tag} | {name} ===" if tag else f"=== ИСТОЧНИК: {doc_id} | {name} ==="
+        context_text += f"{header}\n{full_content}\n\n"
         sources[doc_id] = {"name": name, "url": data["url"], "file_id": data.get("file_id", "")}
 
     return context_text, sources
