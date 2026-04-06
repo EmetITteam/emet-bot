@@ -1498,7 +1498,8 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
         answer += "\n\n*Ознайомитись з документами:*\n" + "\n".join(final_links)
 
     _uname = message.from_user.username or f"id{message.from_user.id}"
-    _log_id = log_to_db(message.from_user.id, _uname, mode_key, ai_used, text, answer, bool(used_links), _model_used, _tokens_in, _tokens_out)
+    _has_source = bool(sources) and not _context_was_empty
+    _log_id = log_to_db(message.from_user.id, _uname, mode_key, ai_used, text, answer, _has_source, _model_used, _tokens_in, _tokens_out)
 
     # Зберігаємо історію діалогу для всіх режимів
     # coach: 3 обміни (6 повідомлень), решта: 2 обміни (4 повідомлення)
