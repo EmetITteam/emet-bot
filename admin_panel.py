@@ -238,7 +238,7 @@ def index_document(filename: str, text: str, source_label: str = "manual_upload"
             from langchain_text_splitters import RecursiveCharacterTextSplitter
 
             doc = Document(page_content=text, metadata={"source": filename, "url": source_label, "folder": category})
-            splitter = RecursiveCharacterTextSplitter(chunk_size=1500, chunk_overlap=200)
+            splitter = RecursiveCharacterTextSplitter(chunk_size=1200, chunk_overlap=300)
             chunks = splitter.split_documents([doc])
 
             for persist_dir, emb_type in targets:
@@ -1359,7 +1359,7 @@ def learning_index_courses():
             from langchain_google_genai import GoogleGenerativeAIEmbeddings
             from langchain_text_splitters import RecursiveCharacterTextSplitter
 
-            splitter = RecursiveCharacterTextSplitter(chunk_size=1500, chunk_overlap=200)
+            splitter = RecursiveCharacterTextSplitter(chunk_size=1200, chunk_overlap=300)
 
             # Init one instance per target — reuse across all topics
             vdbs = {}
