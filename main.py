@@ -862,8 +862,13 @@ def get_context(query, mode="kb", provider="openai", has_competitor=False):
         docs_comp = vdb_competitors.similarity_search(query, k=RAG_K_COMPETITORS)
         return _extract_docs(docs_ours + docs_comp)
     else:
-        # Zone 1: products only — our data, no competitor noise
+        # Zone 1: products first, fallback to competitors if insufficient
         docs = vdb_products.similarity_search(query, k=RAG_K_PRODUCTS)
+        # If products returned very few results, supplement from competitors
+        # This handles cases like ESSE where data is only in competitors docs
+        if len(docs) < 3:
+            docs_comp = vdb_competitors.similarity_search(query, k=RAG_K_COMPETITORS)
+            docs = docs + docs_comp
         return _extract_docs(docs)
 
 
