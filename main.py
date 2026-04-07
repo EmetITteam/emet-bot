@@ -755,7 +755,7 @@ def _extract_docs(docs):
         full_content = "\n".join(data["content"])
         # Mark competitor docs so LLM doesn't confuse their data with our products
         _name_l = name.lower()
-        is_competitor = "competitor" in _name_l or "_master" in _name_l or "competitors_" in _name_l
+        is_competitor = "competitor" in _name_l or "competitir" in _name_l or "_master." in _name_l or "competitors_" in _name_l
         label = f"⚠️ КОНКУРЕНТ (чужі дані, НЕ наш продукт)" if is_competitor else ""
         lms_label = "📘 НАВЧАЛЬНИЙ КУРС EMET" if "[LMS]" in name else ""
         tag = lms_label or label

@@ -21,8 +21,8 @@ SRC = "data/db_index_coach_openai"
 DST_PRODUCTS    = "data/db_index_products_openai"
 DST_COMPETITORS = "data/db_index_competitors_openai"
 
-# Patterns that identify COMPETITOR documents
-COMPETITOR_PATTERNS = ["competitor", "_master", "competitors_"]
+# Patterns that identify COMPETITOR documents (note: "Competitirs" is a typo in filename)
+COMPETITOR_PATTERNS = ["competitor", "competitir", "_master.", "competitors_"]
 
 emb = OpenAIEmbeddings(model="text-embedding-3-small", openai_api_key=OPENAI_KEY)
 
