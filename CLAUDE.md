@@ -26,6 +26,12 @@ RAG-based assistant with 8 modes, LMS system, daily quality monitoring.
 5. Exoxe storage = room temperature (never -20°C)
 6. CE certification = ONLY injectable medical devices, not cosmeceuticals
 7. "Vitaran Exosome" is NOT a product name — use full names from catalog
+8. Pain Relief Technology + Ionization-Adjusted PN — correct terms for Vitaran. NEVER say "NaCl osmotic modulator"
+9. Hidden courses (visible=false) = internal RAG data, NOT shown to managers in LMS. Never create visible courses without user approval
+10. Never delete RAG chunks manually — add prompt rules instead. Deleting chunks causes data loss
+11. RAG_K: products=12, competitors=8. Always search both and merge
+12. After reindexing — bot needs restart OR VDB auto-refresh (mtime check) to see new data
+13. ESSE manufacturer = Esse Skincare, South Africa (ПАР)
 
 ## Commands
 - Deploy bot: `ssh -i ~/.ssh/id_rsa -p 33222 emet@49.12.81.83 "cd /opt/emet-bot && git pull origin main && docker compose restart emet-bot"`
@@ -46,3 +52,6 @@ RAG-based assistant with 8 modes, LMS system, daily quality monitoring.
 - Quality report goes ONLY to ADMIN_ID, never to all users
 - Don't invent product facts — only from course content or RAG
 - Don't question product positioning from courses (if it says "premium" — it's premium)
+- Never create LMS courses visible to managers without user approval — use visible=false for internal RAG data
+- After ANY reindex/migration — run tests/test_knowledge_integrity.py to verify zero data loss
+- Tests must match real bot behavior — bot caches VDB in memory, test scripts create fresh connections

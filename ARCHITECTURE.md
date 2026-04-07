@@ -364,7 +364,7 @@ Developer (VS Code) → git push → GitHub Actions:
 
 | Показник | Значення |
 |----------|----------|
-| Рядків коду | ~9,000 |
+| Рядків коду | ~9,500 |
 | Python файлів | 17 (основних) + 7 (тести) |
 | Telegram хендлерів | 60+ |
 | API маршрутів адмінки | 23 |
@@ -373,6 +373,6 @@ Developer (VS Code) → git push → GitHub Actions:
 | Системних промптів | 5 |
 | LMS курсів | 14 |
 | LMS тем | 44 |
-| RAG чанків (products) | ~367 |
-| RAG чанків (competitors) | ~548 |
-| Git комітів | 95+ |
+| RAG чанків (products) | ~620 |
+| RAG чанків (competitors) | ~611 |
+| Git комітів | 101+ |
