@@ -194,6 +194,70 @@ def _download_bytes(drive, file_id) -> io.BytesIO:
     return buf
 
 
+# ─── Split coach into products + competitors ─────────────────────────────────
+
+COMP_PATTERNS = ["competitor", "competitir", "_master."]
+
+def _split_coach_to_products_competitors():
+    """After coach index is rebuilt, split it into products and competitors."""
+    from langchain_chroma import Chroma as _Chroma
+    from langchain_core.documents import Document as _Doc
+
+    coach_dir = RAG_FOLDERS["coach_openai"]["db"]
+    products_dir = "data/db_index_products_openai"
+    competitors_dir = "data/db_index_competitors_openai"
+
+    emb = OpenAIEmbeddings(model="text-embedding-3-small", openai_api_key=OPENAI_KEY)
+    src = _Chroma(persist_directory=coach_dir, embedding_function=emb)
+    data = src._collection.get(limit=5000, include=["metadatas", "documents"])
+
+    if not data["ids"]:
+        print("  [split] coach is empty, skipping")
+        return
+
+    products, competitors = [], []
+    for meta, content in zip(data["metadatas"], data["documents"]):
+        src_name = meta.get("source", "").lower()
+        is_comp = any(p in src_name for p in COMP_PATTERNS)
+        doc = _Doc(page_content=content, metadata=meta)
+        (competitors if is_comp else products).append(doc)
+
+    # Add LMS topics to products
+    try:
+        import db as _db
+        splitter = RecursiveCharacterTextSplitter(chunk_size=1200, chunk_overlap=300)
+        topics = _db.query_dict(
+            "SELECT t.title, t.content, c.title as ct "
+            "FROM topics t JOIN courses c ON c.id=t.course_id "
+            "WHERE t.content IS NOT NULL AND length(trim(t.content)) > 50 "
+            "ORDER BY c.id, t.order_num"
+        )
+        for t in topics:
+            text = f"# {t['ct']}\n## {t['title']}\n\n{t['content']}"
+            fn = f"[LMS] {t['ct']} -- {t['title']}"
+            doc = _Doc(page_content=text, metadata={"source": fn, "url": "lms_course", "folder": "products"})
+            products.extend(splitter.split_documents([doc]))
+    except Exception as e:
+        print(f"  [split] LMS add error: {e}")
+
+    # Rebuild both indices
+    for path, docs, label in [(products_dir, products, "products"), (competitors_dir, competitors, "competitors")]:
+        shutil.rmtree(path, ignore_errors=True)
+        vdb = _Chroma(persist_directory=path, embedding_function=emb)
+        BATCH = 50
+        for i in range(0, len(docs), BATCH):
+            _batch_to_chroma_simple(docs[i:i+BATCH], emb, vdb)
+        print(f"  [split] {label}: {vdb._collection.count()} chunks")
+
+
+def _batch_to_chroma_simple(docs, emb, vdb):
+    """Simple batch add without rate-limit handling."""
+    try:
+        vdb.add_documents(docs)
+    except Exception as e:
+        print(f"  [split batch] error: {e}")
+
+
 # ─── Построение индексов ──────────────────────────────────────────────────────
 
 def _build_index(drive, files, cfg, folder_label):
@@ -334,6 +398,13 @@ def sync_rag_indexes():
         )
         all_changed_names.extend(f["name"] for f in changed)
         changed_by_category[folder_label] = len(changed)
+
+        # After coach rebuild — auto-split into products + competitors indices
+        if folder_label == "coach":
+            try:
+                _split_coach_to_products_competitors()
+            except Exception as e:
+                print(f"  [split] помилка: {e}")
 
     # ── 2. Certs — тільки sync_state, без RAG-індексу ────────────────────────
     if CERTS_FOLDER_ID:
