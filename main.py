@@ -802,8 +802,10 @@ def get_drive_service():
     return _drive_service
 
 
+_vdb_mtimes = {}  # Track index directory modification times for auto-refresh
+
 def _get_vdb(name, provider="openai"):
-    """Lazy-init a ChromaDB instance by logical name."""
+    """Lazy-init a ChromaDB instance by logical name. Auto-refreshes if index files changed."""
     global _vdb_kb_openai, _vdb_products_openai, _vdb_competitors_openai, _vdb_coach_openai
     global _vdb_kb_google, _vdb_products_google, _vdb_competitors_google, _vdb_coach_google
 
@@ -828,14 +830,28 @@ def _get_vdb(name, provider="openai"):
         logger.info("Split index %s not found, falling back to legacy coach", paths[name])
         name = "coach"
 
-    cache_key = f"_{name}_{provider}"
-    cached = globals().get(f"_vdb_{name}_{provider}")
+    path = paths[name]
+    cache_key = f"_vdb_{name}_{provider}"
+
+    # Auto-refresh: if index directory was modified, drop cached instance
+    try:
+        current_mtime = os.path.getmtime(path) if os.path.exists(path) else 0
+        prev_mtime = _vdb_mtimes.get(cache_key, 0)
+        if current_mtime != prev_mtime and prev_mtime != 0:
+            # Index was rebuilt on disk — drop cache so next call creates fresh instance
+            globals()[cache_key] = None
+            logger.info("VDB cache refreshed for %s (mtime changed)", path)
+        _vdb_mtimes[cache_key] = current_mtime
+    except Exception:
+        pass
+
+    cached = globals().get(cache_key)
     if cached is not None:
         return cached
 
-    vdb = Chroma(persist_directory=paths[name], embedding_function=emb)
-    # Store in module-level cache
-    globals()[f"_vdb_{name}_{provider}"] = vdb
+    vdb = Chroma(persist_directory=path, embedding_function=emb)
+    globals()[cache_key] = vdb
+    _vdb_mtimes[cache_key] = os.path.getmtime(path) if os.path.exists(path) else 0
     return vdb
 
 
