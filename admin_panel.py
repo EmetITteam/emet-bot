@@ -223,9 +223,9 @@ def index_document(filename: str, text: str, source_label: str = "manual_upload"
 
     _INDEX_MAP = {
         "kb":    [("data/db_index_kb_openai",    "openai"), ("data/db_index_kb_google",    "google")],
-        "coach": [("data/db_index_coach_openai", "openai"), ("data/db_index_coach_google", "google")],
+        "coach": [("data/db_index_products_openai", "openai"), ("data/db_index_products_google", "google")],
         "both":  [("data/db_index_kb_openai",    "openai"), ("data/db_index_kb_google",    "google"),
-                  ("data/db_index_coach_openai", "openai"), ("data/db_index_coach_google", "google")],
+                  ("data/db_index_products_openai", "openai"), ("data/db_index_products_google", "google")],
     }
     targets = _INDEX_MAP.get(category, _INDEX_MAP["kb"])
 
@@ -1344,9 +1344,9 @@ def learning_index_courses():
 
     _INDEX_MAP = {
         "kb":    [("data/db_index_kb_openai",    "openai"), ("data/db_index_kb_google",    "google")],
-        "coach": [("data/db_index_coach_openai", "openai"), ("data/db_index_coach_google", "google")],
+        "coach": [("data/db_index_products_openai", "openai"), ("data/db_index_products_google", "google")],
         "both":  [("data/db_index_kb_openai",    "openai"), ("data/db_index_kb_google",    "google"),
-                  ("data/db_index_coach_openai", "openai"), ("data/db_index_coach_google", "google")],
+                  ("data/db_index_products_openai", "openai"), ("data/db_index_products_google", "google")],
     }
     targets = _INDEX_MAP.get(category, _INDEX_MAP["coach"])
     topic_list = list(topics)  # snapshot before background thread

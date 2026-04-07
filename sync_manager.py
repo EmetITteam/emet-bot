@@ -65,8 +65,8 @@ _sync_lock = threading.Lock()
 RAG_FOLDERS = {
     "kb_openai":    {"folder_id": "1RBXHGXOIc2kkSAw-LqzLaRqEE3Ix7L-m", "db": "data/db_index_kb_openai",    "chunk_size": 800,  "overlap": 150, "provider": "openai"},
     "kb_google":    {"folder_id": "1RBXHGXOIc2kkSAw-LqzLaRqEE3Ix7L-m", "db": "data/db_index_kb_google",    "chunk_size": 800,  "overlap": 150, "provider": "google"},
-    "coach_openai": {"folder_id": "1KPPBurEoCV_wWzY5HxEtv_TrMI4qXfPa",  "db": "data/db_index_coach_openai", "chunk_size": 1500, "overlap": 200, "provider": "openai"},
-    "coach_google": {"folder_id": "1KPPBurEoCV_wWzY5HxEtv_TrMI4qXfPa",  "db": "data/db_index_coach_google", "chunk_size": 1500, "overlap": 200, "provider": "google"},
+    "coach_openai": {"folder_id": "1KPPBurEoCV_wWzY5HxEtv_TrMI4qXfPa",  "db": "data/db_index_coach_openai", "chunk_size": 1200, "overlap": 300, "provider": "openai"},
+    "coach_google": {"folder_id": "1KPPBurEoCV_wWzY5HxEtv_TrMI4qXfPa",  "db": "data/db_index_coach_google", "chunk_size": 1200, "overlap": 300, "provider": "google"},
 }
 
 # Папка сертифікатів — тільки для sync_state (SQL-пошук по іменах файлів)

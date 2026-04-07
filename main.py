@@ -157,8 +157,9 @@ logging.basicConfig(
 logger = logging.getLogger("emet_bot")
 
 # --- RAG & LLM CONSTANTS ---
-RAG_K_COACH            = 30    # chunks returned for coach/combo queries
-RAG_K_DEFAULT          = 25    # chunks for kb/cases/operational/certs
+RAG_K_PRODUCTS         = 12    # chunks from products index (our data)
+RAG_K_COMPETITORS      = 5     # chunks from competitors index (for comparisons)
+RAG_K_DEFAULT          = 15    # chunks for kb/cases/operational
 RAG_K_COMBO            = 15    # chunks for combo with category filter
 LLM_TIMEOUT            = 60    # seconds timeout for all LLM API calls
 LLM_INTENT_MAX_TOKENS  = 10    # detect_intent classifier output
@@ -765,10 +766,15 @@ def _extract_docs(docs):
     return context_text, sources
 
 
-_vdb_kb_openai    = None
-_vdb_coach_openai = None
-_vdb_kb_google    = None
-_vdb_coach_google = None
+_vdb_kb_openai          = None
+_vdb_products_openai    = None
+_vdb_competitors_openai = None
+# Legacy fallback — used if new indices don't exist yet
+_vdb_coach_openai       = None
+_vdb_kb_google          = None
+_vdb_products_google    = None
+_vdb_competitors_google = None
+_vdb_coach_google       = None  # legacy fallback
 
 # Embedding синглтони — створюються один раз, а не на кожен запит
 _emb_openai = None
@@ -796,38 +802,69 @@ def get_drive_service():
     return _drive_service
 
 
-def get_context(query, mode="kb", provider="openai"):
-    """Єдина точка RAG-пошуку. provider='openai'|'google'."""
-    global _vdb_kb_openai, _vdb_coach_openai, _vdb_kb_google, _vdb_coach_google
-    if provider == "openai":
-        embeddings = _get_emb_openai()
-        if mode in ("coach", "combo"):
-            if _vdb_coach_openai is None:
-                _vdb_coach_openai = Chroma(persist_directory="data/db_index_coach_openai", embedding_function=embeddings)
-            vdb = _vdb_coach_openai
-        else:
-            if _vdb_kb_openai is None:
-                _vdb_kb_openai = Chroma(persist_directory="data/db_index_kb_openai", embedding_function=embeddings)
-            vdb = _vdb_kb_openai
-    else:
-        embeddings = _get_emb_google()
-        if mode in ("coach", "combo"):
-            if _vdb_coach_google is None:
-                _vdb_coach_google = Chroma(persist_directory="data/db_index_coach_google", embedding_function=embeddings)
-            vdb = _vdb_coach_google
-        else:
-            if _vdb_kb_google is None:
-                _vdb_kb_google = Chroma(persist_directory="data/db_index_kb_google", embedding_function=embeddings)
-            vdb = _vdb_kb_google
+def _get_vdb(name, provider="openai"):
+    """Lazy-init a ChromaDB instance by logical name."""
+    global _vdb_kb_openai, _vdb_products_openai, _vdb_competitors_openai, _vdb_coach_openai
+    global _vdb_kb_google, _vdb_products_google, _vdb_competitors_google, _vdb_coach_google
+
+    _PATHS = {
+        "products":    "data/db_index_products_openai",
+        "competitors": "data/db_index_competitors_openai",
+        "coach":       "data/db_index_coach_openai",       # legacy fallback
+        "kb":          "data/db_index_kb_openai",
+    }
+    _PATHS_G = {
+        "products":    "data/db_index_products_google",
+        "competitors": "data/db_index_competitors_google",
+        "coach":       "data/db_index_coach_google",
+        "kb":          "data/db_index_kb_google",
+    }
+
+    paths = _PATHS if provider == "openai" else _PATHS_G
+    emb = _get_emb_openai() if provider == "openai" else _get_emb_google()
+
+    # Check if split indices exist; if not, fall back to legacy coach
+    if name in ("products", "competitors") and not os.path.exists(paths[name]):
+        logger.info("Split index %s not found, falling back to legacy coach", paths[name])
+        name = "coach"
+
+    cache_key = f"_{name}_{provider}"
+    cached = globals().get(f"_vdb_{name}_{provider}")
+    if cached is not None:
+        return cached
+
+    vdb = Chroma(persist_directory=paths[name], embedding_function=emb)
+    # Store in module-level cache
+    globals()[f"_vdb_{name}_{provider}"] = vdb
+    return vdb
+
+
+def get_context(query, mode="kb", provider="openai", has_competitor=False):
+    """3-zone RAG search: products / products+competitors / kb."""
+    if mode in ("kb", "cases", "operational"):
+        vdb = _get_vdb("kb", provider)
+        return _extract_docs(vdb.similarity_search(query, k=RAG_K_DEFAULT))
 
     if mode == "combo":
+        vdb = _get_vdb("products", provider)
         docs = vdb.similarity_search(query, k=RAG_K_COMBO, filter={"category": "combo"})
         if not docs:
-            # Fallback: no combo-tagged docs → search without filter
             docs = vdb.similarity_search(query, k=RAG_K_COMBO)
         return _extract_docs(docs)
-    k = RAG_K_COACH if mode in ("coach",) else RAG_K_DEFAULT
-    return _extract_docs(vdb.similarity_search(query, k=k))
+
+    # Coach mode — 3-zone logic
+    vdb_products = _get_vdb("products", provider)
+    vdb_competitors = _get_vdb("competitors", provider)
+
+    if has_competitor:
+        # Zone 2: merge — our products + competitor comparison
+        docs_ours = vdb_products.similarity_search(query, k=RAG_K_PRODUCTS)
+        docs_comp = vdb_competitors.similarity_search(query, k=RAG_K_COMPETITORS)
+        return _extract_docs(docs_ours + docs_comp)
+    else:
+        # Zone 1: products only — our data, no competitor noise
+        docs = vdb_products.similarity_search(query, k=RAG_K_PRODUCTS)
+        return _extract_docs(docs)
 
 
 async def detect_intent(query: str) -> str:
@@ -1395,7 +1432,7 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
         try:
             loop = asyncio.get_running_loop()
             _model = MODEL_OPENAI_COACH if mode_key in ("coach", "combo") else MODEL_OPENAI
-            context, sources = await loop.run_in_executor(None, get_context, search_query, mode_key, "openai")
+            context, sources = await loop.run_in_executor(None, get_context, search_query, mode_key, "openai", bool(_detected_competitor))
             if not context.strip():
                 _context_was_empty = True
             stream = await client_openai.chat.completions.create(
@@ -1472,7 +1509,7 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
         ai_used = "Google"
         try:
             loop = asyncio.get_running_loop()
-            context, sources = await loop.run_in_executor(None, get_context, search_query, mode_key, "google")
+            context, sources = await loop.run_in_executor(None, get_context, search_query, mode_key, "google", bool(_detected_competitor))
             # Structured chat for Gemini — separate system, history, and user turns
             gemini_contents = [{"role": "user", "parts": [{"text": SYSTEM_PROMPTS[mode_key]}]},
                                {"role": "model", "parts": [{"text": "Зрозуміло, працюю за інструкціями."}]}]
@@ -1504,7 +1541,7 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
         ai_used = "Claude"
         try:
             loop = asyncio.get_running_loop()
-            context, sources = await loop.run_in_executor(None, get_context, search_query, mode_key, "openai")
+            context, sources = await loop.run_in_executor(None, get_context, search_query, mode_key, "openai", bool(_detected_competitor))
             claude_msg = await client_claude.messages.create(
                 model=MODEL_CLAUDE,
                 max_tokens=LLM_CLAUDE_MAX_TOKENS,
@@ -3102,11 +3139,10 @@ async def auto_sync_task():
 
         # Если RAG обновился — сбрасываем VDB-синглтоны, чтобы следующий запрос загрузил новый индекс
         if result["rag_updated"]:
-            global _vdb_kb_openai, _vdb_coach_openai, _vdb_kb_google, _vdb_coach_google
-            _vdb_kb_openai = None
-            _vdb_coach_openai = None
-            _vdb_kb_google = None
-            _vdb_coach_google = None
+            global _vdb_kb_openai, _vdb_products_openai, _vdb_competitors_openai, _vdb_coach_openai
+            global _vdb_kb_google, _vdb_products_google, _vdb_competitors_google, _vdb_coach_google
+            _vdb_kb_openai = _vdb_products_openai = _vdb_competitors_openai = _vdb_coach_openai = None
+            _vdb_kb_google = _vdb_products_google = _vdb_competitors_google = _vdb_coach_google = None
             cat_labels = {"kb": "📚 База знань", "coach": "💼 Коуч", "certs": "📜 Сертифікати"}
             by_cat = result.get("rag_by_category", {})
             lines = [f"{cat_labels.get(k, k)}: {v} файл(ів)" for k, v in by_cat.items()]
