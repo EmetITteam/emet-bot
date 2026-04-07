@@ -724,6 +724,13 @@ def get_user_level(user_id):
 
 
 # --- 6. МОДУЛИ ВЕКТОРНОГО ПОИСКА ---
+_INJECTION_PATTERNS = re.compile(
+    r"(?i)(ignore\s+(all\s+)?previous\s+instructions|"
+    r"you\s+are\s+now\s+|system\s*:\s*|"
+    r"disregard\s+(all\s+)?prior|"
+    r"forget\s+(everything|all|your\s+instructions))",
+)
+
 def _extract_docs(docs):
     context_text = ""
     sources = {}
@@ -734,6 +741,10 @@ def _extract_docs(docs):
         url = doc.metadata.get("url", "")
         file_id = doc.metadata.get("file_id", "")
         content = doc.page_content
+        # Sanitize: strip known prompt injection patterns from indexed documents
+        if _INJECTION_PATTERNS.search(content):
+            content = _INJECTION_PATTERNS.sub("[FILTERED]", content)
+            logger.warning("Prompt injection pattern detected in doc '%s'", name[:60])
         if name not in grouped_docs:
             grouped_docs[name] = {"url": url, "file_id": file_id, "content": []}
         grouped_docs[name]["content"].append(content)
@@ -810,7 +821,11 @@ def get_context(query, mode="kb", provider="openai"):
             vdb = _vdb_kb_google
 
     if mode == "combo":
-        return _extract_docs(vdb.similarity_search(query, k=RAG_K_COMBO, filter={"category": "combo"}))
+        docs = vdb.similarity_search(query, k=RAG_K_COMBO, filter={"category": "combo"})
+        if not docs:
+            # Fallback: no combo-tagged docs → search without filter
+            docs = vdb.similarity_search(query, k=RAG_K_COMBO)
+        return _extract_docs(docs)
     k = RAG_K_COACH if mode in ("coach",) else RAG_K_DEFAULT
     return _extract_docs(vdb.similarity_search(query, k=k))
 
@@ -1015,7 +1030,14 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
         "magnox", "магнокс",
         "neuronox", "нейронокс",
     ]
-    _has_emet_product_early = any(p in _t_lower_early for p in _EMET_PRODUCT_NAMES_EARLY)
+    # Word-boundary check for short keys to avoid substring collisions (esse in "message" etc)
+    _SHORT_KEYS = {"esse", "эссе", "ессе", "iuse", "айюз"}
+    def _match_product(p, text):
+        if p in _SHORT_KEYS:
+            import re
+            return bool(re.search(r'\b' + re.escape(p) + r'\b', text))
+        return p in text
+    _has_emet_product_early = any(_match_product(p, _t_lower_early) for p in _EMET_PRODUCT_NAMES_EARLY)
 
     _search_query_ready = None  # буде заповнено паралельно якщо пройдемо через else
     if _combo_from_button or _is_combo_query:
@@ -1140,7 +1162,7 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
     ]
     # _SCRIPT_KEYWORDS визначений вище і переюзається тут
     t_lower = t
-    _detected_product = next((p for p in _EMET_PRODUCTS if p in t_lower), None)
+    _detected_product = next((p for p in _EMET_PRODUCTS if _match_product(p, t_lower)), None)
     _all_detected_products = [p for p in _EMET_PRODUCTS if p in t_lower]
     _has_objection = any(kw in t_lower for kw in _OBJECTION_KEYWORDS)
     _is_script_request = any(kw in t_lower for kw in _SCRIPT_KEYWORDS)
@@ -1451,15 +1473,16 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
         try:
             loop = asyncio.get_running_loop()
             context, sources = await loop.run_in_executor(None, get_context, search_query, mode_key, "google")
-            # Для Google строим историю как текст
-            history_text = ""
+            # Structured chat for Gemini — separate system, history, and user turns
+            gemini_contents = [{"role": "user", "parts": [{"text": SYSTEM_PROMPTS[mode_key]}]},
+                               {"role": "model", "parts": [{"text": "Зрозуміло, працюю за інструкціями."}]}]
             for msg in chat_history:
-                role = "Менеджер" if msg["role"] == "user" else "Коуч"
-                history_text += f"{role}: {msg['content']}\n"
-            prompt = f"{SYSTEM_PROMPTS[mode_key]}\n\n{history_text}КОНТЕКСТ:\n{context}\n\nВОПРОС:\n{llm_user_text}"
+                g_role = "user" if msg["role"] == "user" else "model"
+                gemini_contents.append({"role": g_role, "parts": [{"text": msg["content"]}]})
+            gemini_contents.append({"role": "user", "parts": [{"text": f"КОНТЕКСТ:\n{context}\n\nВОПРОС:\n{llm_user_text}"}]})
             res = await loop.run_in_executor(
                 None,
-                lambda: client_google.models.generate_content(model=MODEL_GOOGLE, contents=prompt,
+                lambda: client_google.models.generate_content(model=MODEL_GOOGLE, contents=gemini_contents,
                                                                config={"timeout": 60})
             )
             answer = res.text
@@ -1543,11 +1566,13 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
         await state.update_data(chat_history=chat_history)
         _save_chat_history_db(message.from_user.id, chat_history)
 
-    if _context_was_empty and mode_key == "kb":
+    if _context_was_empty and ADMIN_ID:
+        mode_label = {"kb": "База знань", "coach": "Sales Coach", "combo": "Комбо", "cases": "Кейси", "operational": "Операційні"}.get(mode_key, mode_key)
         try:
             await bot.send_message(
                 ADMIN_ID,
-                f"*Пропуск в базе знаний!*\n@{message.from_user.username} спросил:\n_{text}_"
+                f"*Пропуск в RAG [{mode_label}]!*\n@{message.from_user.username} спросил:\n_{text}_",
+                parse_mode="Markdown"
             )
         except Exception as admin_err:
             logger.error("admin notification error: %s", admin_err)
