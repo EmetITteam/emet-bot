@@ -215,8 +215,8 @@ def build_report(dialogs, findings):
     lines.append("")
 
     # Quality score
-    error_score = len(p0) * 3 + len(p1) * 1 + len(p2) * 0.3
-    quality = max(0, round(10 - error_score, 1))
+    error_score = len(p0) * 2 + len(p1) * 0.5 + len(p2) * 0.1
+    quality = max(1, round(10 - error_score, 1))
     emoji = "🟢" if quality >= 8 else "🟡" if quality >= 5 else "🔴"
     lines.append(f"*Якість: {emoji} {quality}/10*")
     lines.append(f"  Refusal rate: {refusal_rate}%")
