@@ -855,17 +855,59 @@ def _get_vdb(name, provider="openai"):
     return vdb
 
 
+RAG_SCORE_THRESHOLD    = 0.45   # discard chunks with cosine distance above this
+
+# Product name normalization for RAG search queries
+_QUERY_NORMALIZE = {
+    "токс ай": "Tox Eye", "витаран токс": "Vitaran Tox Eye",
+    "вайтнінг": "Whitening", "вайтинг": "Whitening",
+    "скінбустер": "IUSE SKINBOOSTER HA 20", "скін бустер": "IUSE SKINBOOSTER HA 20",
+    "скін хілер": "Vitaran Skin Healer",
+    "ессе": "ESSE Esse", "эссе": "ESSE Esse",
+    "елансе": "Ellanse Ellansé", "еланс": "Ellanse Ellansé",
+    "нейраміс": "Neuramis", "нейрамис": "Neuramis",
+    "нейронокс": "Neuronox", "петаран": "Petaran PLLA",
+    "ексоксе": "Exoxe EXOXE", "экзокс": "Exoxe EXOXE",
+    "хп сел": "HP Cell Vitaran", "hp сел": "HP Cell Vitaran",
+    "айюз хеір": "IUSE HAIR REGROWTH", "iuse хеір": "IUSE HAIR REGROWTH",
+    "лізат": "лізати Esse пробіотики", "пребіотик": "пребіотики Esse",
+}
+
+def _normalize_query(query: str) -> str:
+    """Enrich query with canonical product names for better RAG matching."""
+    q_lower = query.lower()
+    additions = []
+    for trigger, canonical in _QUERY_NORMALIZE.items():
+        if trigger in q_lower:
+            additions.append(canonical)
+    if additions:
+        return query + " " + " ".join(additions)
+    return query
+
+
+def _search_with_score(vdb, query, k, threshold=RAG_SCORE_THRESHOLD):
+    """Search with score filtering — discard irrelevant chunks."""
+    try:
+        results = vdb.similarity_search_with_score(query, k=k)
+        return [doc for doc, score in results if score < threshold]
+    except Exception:
+        # Fallback to regular search if scoring fails
+        return vdb.similarity_search(query, k=k)
+
+
 def get_context(query, mode="kb", provider="openai", has_competitor=False):
     """3-zone RAG search: products / products+competitors / kb."""
+    normalized_query = _normalize_query(query)
+
     if mode in ("kb", "cases", "operational"):
         vdb = _get_vdb("kb", provider)
-        return _extract_docs(vdb.similarity_search(query, k=RAG_K_DEFAULT))
+        return _extract_docs(_search_with_score(vdb, normalized_query, RAG_K_DEFAULT))
 
     if mode == "combo":
         vdb = _get_vdb("products", provider)
-        docs = vdb.similarity_search(query, k=RAG_K_COMBO, filter={"category": "combo"})
+        docs = _search_with_score(vdb, normalized_query, RAG_K_COMBO)
         if not docs:
-            docs = vdb.similarity_search(query, k=RAG_K_COMBO)
+            docs = vdb.similarity_search(normalized_query, k=RAG_K_COMBO)
         return _extract_docs(docs)
 
     # Coach mode — 3-zone logic
@@ -873,15 +915,12 @@ def get_context(query, mode="kb", provider="openai", has_competitor=False):
     vdb_competitors = _get_vdb("competitors", provider)
 
     if has_competitor:
-        # Zone 2: merge — our products + competitor comparison
-        docs_ours = vdb_products.similarity_search(query, k=RAG_K_PRODUCTS)
-        docs_comp = vdb_competitors.similarity_search(query, k=RAG_K_COMPETITORS)
+        docs_ours = _search_with_score(vdb_products, normalized_query, RAG_K_PRODUCTS)
+        docs_comp = _search_with_score(vdb_competitors, normalized_query, RAG_K_COMPETITORS)
         return _extract_docs(docs_ours + docs_comp)
     else:
-        # Zone 1: products first + always supplement from competitors
-        # This ensures products like ESSE (which have data only in competitors docs) are found
-        docs_products = vdb_products.similarity_search(query, k=RAG_K_PRODUCTS)
-        docs_comp = vdb_competitors.similarity_search(query, k=RAG_K_COMPETITORS)
+        docs_products = _search_with_score(vdb_products, normalized_query, RAG_K_PRODUCTS)
+        docs_comp = _search_with_score(vdb_competitors, normalized_query, RAG_K_COMPETITORS)
         return _extract_docs(docs_products + docs_comp)
 
 
@@ -1459,7 +1498,7 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
                 messages=[
                     {"role": "system", "content": SYSTEM_PROMPTS[mode_key]},
                     *chat_history,
-                    {"role": "user", "content": f"КОНТЕКСТ:\n{context}\n\nВОПРОС:\n{llm_user_text}"}
+                    {"role": "user", "content": f"КОНТЕКСТ:\n{context}\n\n⚠️ НАГАДУВАННЯ: 1) Цифри ТІЛЬКИ з контексту 2) Дані ⚠️КОНКУРЕНТ = чужі, не наші 3) Пріоритет: 📘LMS > інші 4) Перед 'немає інформації' — перечитай ВЕСЬ контекст\n\nВОПРОС:\n{llm_user_text}"}
                 ],
                 stream=True,
                 stream_options={"include_usage": True},
@@ -1534,7 +1573,7 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
             for msg in chat_history:
                 g_role = "user" if msg["role"] == "user" else "model"
                 gemini_contents.append({"role": g_role, "parts": [{"text": msg["content"]}]})
-            gemini_contents.append({"role": "user", "parts": [{"text": f"КОНТЕКСТ:\n{context}\n\nВОПРОС:\n{llm_user_text}"}]})
+            gemini_contents.append({"role": "user", "parts": [{"text": f"КОНТЕКСТ:\n{context}\n\n⚠️ НАГАДУВАННЯ: 1) Цифри ТІЛЬКИ з контексту 2) Дані ⚠️КОНКУРЕНТ = чужі, не наші 3) Пріоритет: 📘LMS > інші 4) Перед 'немає інформації' — перечитай ВЕСЬ контекст\n\nВОПРОС:\n{llm_user_text}"}]})
             res = await loop.run_in_executor(
                 None,
                 lambda: client_google.models.generate_content(model=MODEL_GOOGLE, contents=gemini_contents,
@@ -1567,7 +1606,7 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
                 system=SYSTEM_PROMPTS[mode_key],
                 messages=[
                     *chat_history,
-                    {"role": "user", "content": f"КОНТЕКСТ:\n{context}\n\nВОПРОС:\n{llm_user_text}"}
+                    {"role": "user", "content": f"КОНТЕКСТ:\n{context}\n\n⚠️ НАГАДУВАННЯ: 1) Цифри ТІЛЬКИ з контексту 2) Дані ⚠️КОНКУРЕНТ = чужі, не наші 3) Пріоритет: 📘LMS > інші 4) Перед 'немає інформації' — перечитай ВЕСЬ контекст\n\nВОПРОС:\n{llm_user_text}"}
                 ]
             )
             answer = claude_msg.content[0].text
