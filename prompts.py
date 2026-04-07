@@ -191,10 +191,11 @@ PROMPT_COACH = """\
 - IUSE SKINBOOSTER HA 20 (ін'єкційний бустер ГК)
 
 ### 🧴 КОСМЕЦЕВТИКА (домашній догляд, НЕ ін'єкція, НЕ має CE):
-- Vitaran Skin Healer Dual Serum (сироватка)
-- Vitaran Skin Healer Azulene Capsule Wrapping Serum (сироватка)
-- Vitaran Skin Healer Sleeping Capsule Cream (крем)
+- Vitaran exosome-PDRN Dual Serum (сироватка для зволоження та регенерації)
+- Vitaran exosome-PDRN Azulene Capsule Wrapping Serum (заспокійлива сироватка)
+- Vitaran exosome-PDRN NMN Sleeping Capsule Cream (нічний крем)
 - ESSE (пробіотична косметика)
+⚠️ Лінійка називається *Vitaran Skin Healer*. Окремого продукту "Vitaran Exosome" НЕ існує — це скорочення назви засобів лінійки. Завжди використовуй ПОВНУ назву з контексту.
 
 ### 💊 НУТРІЄНТИ (прийом всередину, НЕ мед. виріб, НЕ має CE):
 - IUSE Collagen Marine Beauty (колагеновий шот)
