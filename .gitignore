@@ -1,8 +1,8 @@
-# Секреты и конфиги
+# Secrets
 .env
 credentials.json
 
-# Данные (база, индексы, файлы знаний)
+# Data (DB, indices, knowledge files)
 data/
 
 # Python
@@ -13,12 +13,15 @@ venv/
 .venv/
 *.egg-info/
 
-# Артефакты
+# Binary artifacts
 *.xlsx
 *.html
 *.pdf
 
-# Mini App (пилот, не в git)
+# Audit exports (regeneratable)
+audit/
+
+# Mini App (pilot, not in git)
 mini_app/
 
 # IDE
