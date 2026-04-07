@@ -855,7 +855,7 @@ def _get_vdb(name, provider="openai"):
     return vdb
 
 
-RAG_SCORE_THRESHOLD    = 0.45   # discard chunks with cosine distance above this
+RAG_SCORE_THRESHOLD    = 1.5    # permissive threshold — log scores for tuning, don't discard aggressively
 
 # Product name normalization for RAG search queries
 _QUERY_NORMALIZE = {
@@ -886,12 +886,15 @@ def _normalize_query(query: str) -> str:
 
 
 def _search_with_score(vdb, query, k, threshold=RAG_SCORE_THRESHOLD):
-    """Search with score filtering — discard irrelevant chunks."""
+    """Search with score logging and optional filtering."""
     try:
         results = vdb.similarity_search_with_score(query, k=k)
+        if results:
+            scores = [score for _, score in results]
+            logger.debug("RAG scores: min=%.3f max=%.3f avg=%.3f query=%s",
+                        min(scores), max(scores), sum(scores)/len(scores), query[:50])
         return [doc for doc, score in results if score < threshold]
     except Exception:
-        # Fallback to regular search if scoring fails
         return vdb.similarity_search(query, k=k)
 
 
