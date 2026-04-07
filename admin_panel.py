@@ -364,6 +364,7 @@ BASE_HTML = """
   <a href="/users" class="{{ 'active' if active=='users' }}">👥 Пользователи</a>
   <a href="/learning" class="{{ 'active' if active=='learning' }}">🎓 Навчання</a>
   <a href="/access" class="{{ 'active' if active=='access' }}">🔑 Доступи</a>
+  <a href="/quality" class="{{ 'active' if active=='quality' }}">🔍 Якість</a>
   <a href="/digest" class="{{ 'active' if active=='digest' }}">📨 Дайджест</a>
   <a href="/logout" class="logout btn btn-sm btn-outline" style="margin:auto 0 auto auto;color:#fff;border-color:rgba(255,255,255,.4)">Выйти</a>
 </nav>
@@ -1990,6 +1991,59 @@ def digest_send():
     threading.Thread(target=_send_digest_now, daemon=True).start()
     flash("✅ Дайджест отправлен в Telegram администраторам и директорам.", "success")
     return redirect(url_for("digest_page"))
+
+
+@app.route("/quality", methods=["GET"])
+@login_required
+def quality_page():
+    """Quality monitoring page — run analysis on demand."""
+    last_report = ""
+    report_path = os.path.join(os.path.dirname(__file__), "data", "last_quality_report.txt")
+    if os.path.exists(report_path):
+        with open(report_path, "r", encoding="utf-8") as f:
+            last_report = f.read()
+
+    content = f"""
+<div style='margin-bottom:24px'>
+  <h1 style='font-size:20px;font-weight:800'>🔍 Quality Monitor — моніторинг якості відповідей</h1>
+</div>
+<div class='card'>
+  <h2>📊 Запустити аналіз</h2>
+  <p style='font-size:13px;color:#666;margin-bottom:16px'>
+    Аналіз діалогів за останні 24 години: хибні відповіді, пропуски RAG, крос-сейл, суперечності.
+    Звіт також автоматично відправляється адміну щодня о 08:00.
+  </p>
+  <form method='post' action='/quality/run'>
+    <button type='submit' class='btn btn-primary'>🔄 Запустити аналіз зараз</button>
+  </form>
+</div>
+<div class='card'>
+  <h2>📋 Останній звіт</h2>
+  <pre style='white-space:pre-wrap;font-size:13px;background:#f7f8fa;padding:16px;border-radius:8px;max-height:600px;overflow-y:auto'>{last_report or 'Звіт ще не створювався. Натисніть кнопку вище.'}</pre>
+</div>
+"""
+    return render_template_string(BASE_HTML, content=content, active="quality")
+
+
+@app.route("/quality/run", methods=["POST"])
+@login_required
+def quality_run():
+    """Run quality analysis now."""
+    def _run():
+        try:
+            from quality_monitor import run_monitor
+            report, findings = run_monitor()
+            if report:
+                report_path = os.path.join(os.path.dirname(__file__), "data", "last_quality_report.txt")
+                with open(report_path, "w", encoding="utf-8") as f:
+                    f.write(report)
+                print(f"Quality report generated: {len(findings or [])} findings")
+        except Exception as e:
+            print(f"Quality monitor error: {e}")
+
+    threading.Thread(target=_run, daemon=True).start()
+    flash("✅ Аналіз запущено. Оновіть сторінку через 10-15 секунд.", "success")
+    return redirect(url_for("quality_page"))
 
 
 def _build_digest_telegram() -> str:

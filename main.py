@@ -3128,6 +3128,31 @@ async def weekly_digest_task():
             logger.error("weekly_digest error: %s", e)
 
 
+async def daily_quality_task():
+    """Щодня о 08:00 відправляє звіт якості ТІЛЬКИ адміну."""
+    while True:
+        now = datetime.now()
+        tomorrow_8am = now.replace(hour=8, minute=0, second=0, microsecond=0)
+        if now.hour >= 8:
+            tomorrow_8am += timedelta(days=1)
+        await asyncio.sleep(max((tomorrow_8am - now).total_seconds(), 60))
+
+        try:
+            from quality_monitor import run_monitor
+            report, findings = run_monitor()
+            if report and ADMIN_ID:
+                # Split if too long for Telegram
+                if len(report) > 4000:
+                    parts = [report[i:i+4000] for i in range(0, len(report), 4000)]
+                else:
+                    parts = [report]
+                for part in parts:
+                    await bot.send_message(ADMIN_ID, part, parse_mode="Markdown")
+                logger.info("Quality report sent to admin: %d findings", len(findings) if findings else 0)
+        except Exception as e:
+            logger.error("Quality monitor error: %s", e)
+
+
 async def auto_sync_task():
     """Фоновая задача: синхронизация Drive → RAG + курсы каждые SYNC_INTERVAL_SEC секунд."""
     # Первый запуск — через 60 сек после старта (бот уже принимает запросы)
@@ -3187,6 +3212,7 @@ async def main():
     asyncio.create_task(weekly_digest_task())
     asyncio.create_task(ttl_cleanup_task())
     asyncio.create_task(daily_cost_task())
+    asyncio.create_task(daily_quality_task())
 
     # Повідомлення адміну про запуск — розрізняємо деплой від несподіваного рестарту
     try:
