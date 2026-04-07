@@ -293,6 +293,21 @@ def run_monitor():
 
     print(f"Findings: {len(all_findings)} total")
 
+    # Knowledge integrity check
+    try:
+        from tests.test_knowledge_integrity import run_integrity_check
+        integrity_ok, integrity_report = run_integrity_check(verbose=False)
+        if not integrity_ok:
+            all_findings.append({
+                "type": "knowledge_loss",
+                "severity": "P0",
+                "description": "Knowledge integrity check FAILED — data loss detected",
+                "dialog_id": "system",
+                "match": integrity_report[:200],
+            })
+    except Exception as e:
+        print(f"Integrity check error: {e}")
+
     # Build report
     report = build_report(dialogs, all_findings)
     print("\n" + report)

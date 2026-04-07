@@ -403,6 +403,16 @@ def sync_rag_indexes():
         if folder_label == "coach":
             try:
                 _split_coach_to_products_competitors()
+                # Verify integrity after split
+                try:
+                    from tests.test_knowledge_integrity import run_integrity_check
+                    passed, report = run_integrity_check(verbose=False)
+                    if passed:
+                        print("  [integrity] OK — zero data loss")
+                    else:
+                        print(f"  [integrity] FAILED!\n{report}")
+                except Exception as e:
+                    print(f"  [integrity] check error: {e}")
             except Exception as e:
                 print(f"  [split] помилка: {e}")
 
