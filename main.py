@@ -163,7 +163,7 @@ RAG_K_COMBO            = 15    # chunks for combo with category filter
 LLM_TIMEOUT            = 60    # seconds timeout for all LLM API calls
 LLM_INTENT_MAX_TOKENS  = 10    # detect_intent classifier output
 LLM_QUERY_MAX_TOKENS   = 60    # prepare_search_query output
-LLM_CLAUDE_MAX_TOKENS  = 1024  # Claude fallback response
+LLM_CLAUDE_MAX_TOKENS  = 4096  # Claude fallback response
 STREAM_UPDATE_INTERVAL = 0.8   # seconds between streaming message edits
 CHAT_HISTORY_COACH     = 6     # max messages in coach history (3 exchanges)
 CHAT_HISTORY_DEFAULT   = 4     # max messages for other modes (2 exchanges)
@@ -742,7 +742,8 @@ def _extract_docs(docs):
         doc_id = f"REF{i}"
         full_content = "\n".join(data["content"])
         # Mark competitor docs so LLM doesn't confuse their data with our products
-        is_competitor = "competitor" in name.lower() or "master" in name.lower()
+        _name_l = name.lower()
+        is_competitor = "competitor" in _name_l or "_master" in _name_l or "competitors_" in _name_l
         label = f"⚠️ КОНКУРЕНТ (чужі дані, НЕ наш продукт)" if is_competitor else ""
         lms_label = "📘 НАВЧАЛЬНИЙ КУРС EMET" if "[LMS]" in name else ""
         tag = lms_label or label
@@ -972,7 +973,7 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
     _AFFIRMATION_KEYWORDS = [
         "хочу", "так", "да", "ок", "добре", "хорошо", "ага", "угу",
         "потрібно", "нужно", "давай", "продовж", "продолжай", "далі", "більше", "ще", "ещё",
-        "є", "есть", "нет", "ні", "зрозуміло", "понятно", "дякую", "спасибо", "окей", "okay",
+        "є", "есть", "зрозуміло", "понятно", "дякую", "спасибо", "окей", "okay",
     ]
     _t_clean_aff = _t_lower_early.rstrip("!?.")
     _is_short_affirmation = (
@@ -1013,7 +1014,6 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
         "iuse", "айюз",
         "magnox", "магнокс",
         "neuronox", "нейронокс",
-        "pdrn", "пдрн", "pcl",
     ]
     _has_emet_product_early = any(p in _t_lower_early for p in _EMET_PRODUCT_NAMES_EARLY)
 
@@ -1040,7 +1040,13 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
         "operational": UserState.mode_operational,
         "certs":       UserState.mode_certs,
     }
-    await state.set_state(state_map.get(mode_key, UserState.mode_kb))
+    new_state = state_map.get(mode_key, UserState.mode_kb)
+    # Clear chat history when mode auto-switches to prevent context leaks
+    prev_state = await state.get_state()
+    if prev_state and new_state != prev_state:
+        chat_history = []
+        await state.update_data(chat_history=[])
+    await state.set_state(new_state)
 
     # --- Certs: прямий SQL-пошук по назвах файлів (без RAG) ---
     if mode_key == "certs":
@@ -1078,32 +1084,51 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
     search_query = _search_query_ready if _search_query_ready is not None else await prepare_search_query(text)
 
     # --- Python-level детекция продукта + возражения (чтобы LLM не переспрашивал) ---
+    # IMPORTANT: longer keys MUST come before shorter ones (e.g. "iuse hair" before "iuse")
     _EMET_PRODUCTS = [
         "ellanse", "elanse", "еланс", "елансе", "элансе", "эллансе", "ellanсе",
         "neuramis", "нейрамис", "нейраміс",
+        "vitaran skin", "вітаран скін", "скін хілер", "skin healer",
+        "vitaran tox", "витаран токс", "вітаран токс", "tox eye", "токс ай",
+        "vitaran whitening", "витаран вайтнінг", "вітаран вайтнінг",
+        "hp cell", "хп сел", "hp сел",
         "vitaran", "вітаран", "витаран",
         "petaran", "петаран",
         "полімолочна кислота", "полимолочная кислота", "poly plla", "поли-l-молочна", "поли-l-молочная",
         "exoxe", "экзокс", "экзосомы", "ексоксе",
         "esse", "эссе", "ессе",
-        "vitaran skin", "вітаран скін",
-        "iuse collagen", "iuse", "айюз", "июз",
+        "iuse hair", "iuse хеір", "iuse хеир", "айюз хеір",
+        "iuse skin", "iuse скінбустер", "скінбустер", "skinbooster",
+        "iuse collagen", "iuse колаген", "айюз колаген",
+        "iuse", "айюз", "июз",
+        "neuronox", "нейронокс",
         "magnox", "магнокс",
     ]
-    # Канонические имена продуктов для подстановки в системное сообщение
     _PRODUCT_CANONICAL = {
         "ellanse": "Ellansé", "elanse": "Ellansé", "еланс": "Ellansé",
         "елансе": "Ellansé", "элансе": "Ellansé", "эллансе": "Ellansé", "ellanсе": "Ellansé",
         "neuramis": "Neuramis", "нейрамис": "Neuramis", "нейраміс": "Neuramis",
+        "vitaran skin": "Vitaran Skin Healer", "вітаран скін": "Vitaran Skin Healer",
+        "скін хілер": "Vitaran Skin Healer", "skin healer": "Vitaran Skin Healer",
+        "vitaran tox": "HP Cell Vitaran Tox Eye", "витаран токс": "HP Cell Vitaran Tox Eye",
+        "вітаран токс": "HP Cell Vitaran Tox Eye", "tox eye": "HP Cell Vitaran Tox Eye",
+        "токс ай": "HP Cell Vitaran Tox Eye",
+        "vitaran whitening": "HP Cell Vitaran Whitening", "витаран вайтнінг": "HP Cell Vitaran Whitening",
+        "вітаран вайтнінг": "HP Cell Vitaran Whitening",
+        "hp cell": "HP Cell Vitaran", "хп сел": "HP Cell Vitaran", "hp сел": "HP Cell Vitaran",
         "vitaran": "Vitaran", "вітаран": "Vitaran", "витаран": "Vitaran",
         "petaran": "Petaran", "петаран": "Petaran",
         "полімолочна кислота": "Petaran", "полимолочная кислота": "Petaran",
         "poly plla": "Petaran", "поли-l-молочна": "Petaran", "поли-l-молочная": "Petaran",
         "exoxe": "EXOXE", "экзокс": "EXOXE", "экзосомы": "EXOXE", "ексоксе": "EXOXE",
         "esse": "ESSE", "эссе": "ESSE", "ессе": "ESSE",
-        "vitaran skin": "Vitaran Skin Healer", "вітаран скін": "Vitaran Skin Healer",
-        "iuse collagen": "IUSE Collagen", "iuse": "IUSE Collagen",
-        "айюз": "IUSE Collagen", "июз": "IUSE Collagen",
+        "iuse hair": "IUSE HAIR REGROWTH", "iuse хеір": "IUSE HAIR REGROWTH",
+        "iuse хеир": "IUSE HAIR REGROWTH", "айюз хеір": "IUSE HAIR REGROWTH",
+        "iuse skin": "IUSE SKINBOOSTER HA 20", "iuse скінбустер": "IUSE SKINBOOSTER HA 20",
+        "скінбустер": "IUSE SKINBOOSTER HA 20", "skinbooster": "IUSE SKINBOOSTER HA 20",
+        "iuse collagen": "IUSE Collagen", "iuse колаген": "IUSE Collagen", "айюз колаген": "IUSE Collagen",
+        "iuse": "IUSE", "айюз": "IUSE", "июз": "IUSE",
+        "neuronox": "Neuronox", "нейронокс": "Neuronox",
         "magnox": "Magnox", "магнокс": "Magnox",
     }
     _OBJECTION_KEYWORDS = [
@@ -1152,9 +1177,9 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
     # Детекція конкурентів — збагачує контекст для порівняльних аргументів
     _COMPETITORS = ["radiesse", "радіесс", "sculptra", "скульптра", "juvederm", "ювідерм",
                     "teosyal", "теосял", "restylane", "рестилайн", "rejuran", "реджуран",
-                    "aesthefill", "естефіл", "pdrn", "пдрн", "plinest", "плінест",
+                    "aesthefill", "естефіл", "plinest", "плінест",
                     "nucleofill", "нуклеофіл", "mastelli", "мастеллі", "cellular matrix",
-                    "benev", "jalupro", "regenyal"]
+                    "benev", "jalupro", "regenyal", "juvelook", "profhilo", "профіло"]
     _detected_competitor = next((c for c in _COMPETITORS if c in t_lower), None)
     if not _detected_competitor and chat_history:
         for _m in reversed([m for m in chat_history if m["role"] == "user"][-3:]):
