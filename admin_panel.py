@@ -1406,7 +1406,7 @@ def learning_index_courses():
 @login_required
 def learning():
     # Все курсы
-    courses = db_query("SELECT id, title, description FROM courses ORDER BY id")
+    courses = db_query("SELECT id, title, description, COALESCE(visible, true) as visible FROM courses ORDER BY id")
 
     # Все темы с кол-вом вопросов
     topics_all = db_query(
@@ -1465,10 +1465,12 @@ def learning():
 
         ctitle = c['title']
         cdesc  = c.get('description', '')[:60]
+        is_hidden = not c.get('visible', True)
+        hidden_badge = " <span style='font-size:10px;background:#fff3e0;color:#e65100;padding:2px 6px;border-radius:4px'>внутрішній</span>" if is_hidden else ""
         confirm_msg = f"Видалити курс '{ctitle}' та всі результати?"
         course_summary_rows += (
             f"<tr>"
-            f"<td><b>{ctitle}</b>"
+            f"<td><b>{ctitle}</b>{hidden_badge}"
             f"<br><span style='font-size:11px;color:#999'>{cdesc}</span></td>"
             f"<td style='text-align:center'>{len(ctopics)}</td>"
             f"<td style='text-align:center'>{len(learners_in_course)}</td>"

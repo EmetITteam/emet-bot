@@ -605,7 +605,7 @@ def save_course(title, json_data):
 
 
 def get_courses():
-    return db.query("SELECT id, title, description FROM courses ORDER BY id")
+    return db.query("SELECT id, title, description FROM courses WHERE visible IS NOT FALSE ORDER BY id")
 
 
 def get_topics(course_id):
