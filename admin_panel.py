@@ -2049,6 +2049,7 @@ def quality_run():
     report_path = os.path.join(os.path.dirname(__file__), "data", "last_quality_report.txt")
 
     def _run():
+        import sys as _sys
         try:
             # Create lock file
             with open(lock_path, "w") as lf:
@@ -2056,13 +2057,13 @@ def quality_run():
 
             # Redirect stdout to avoid I/O errors in background thread
             import io as _io
-            old_stdout = sys.stdout
-            sys.stdout = _io.TextIOWrapper(_io.BytesIO(), encoding='utf-8', errors='replace')
+            old_stdout = _sys.stdout
+            _sys.stdout = _io.TextIOWrapper(_io.BytesIO(), encoding='utf-8', errors='replace')
             try:
                 from quality_monitor import run_monitor
                 report, findings = run_monitor()
             finally:
-                sys.stdout = old_stdout
+                _sys.stdout = old_stdout
 
             if report:
                 with open(report_path, "w", encoding="utf-8") as f:
