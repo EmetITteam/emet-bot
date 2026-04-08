@@ -717,7 +717,7 @@ def dashboard():
 
 <div class="card"><h2>Расходы по моделям</h2>
   <table>
-    <thead><tr><th>Модель</th><th>Запросов</th><th>Токенов (вход)</th><th>Токенов (выход)</th><th>Стоимость</th></tr></thead>
+    <thead><tr><th>Модель</th><th>Запитів</th><th>Токенів (вхід)</th><th>Токенів (вихід)</th><th>Вартість</th></tr></thead>
     <tbody>{model_rows_html}
       <tr style="font-weight:800;border-top:2px solid #eee">
         <td>ИТОГО</td><td>{total}</td><td>{tokens_in_sum:,}</td>
@@ -747,7 +747,7 @@ def dashboard():
 
 <div class="card"><h2>Последние 10 запросов</h2>
   <table>
-    <thead><tr><th>Время</th><th>Пользователь</th><th>Режим</th><th>Движок</th><th>Вопрос</th><th>База</th></tr></thead>
+    <thead><tr><th>Час</th><th>Користувач</th><th>Режим</th><th>Двигун</th><th>Запит</th><th>База</th></tr></thead>
     <tbody>{last10_html}</tbody>
   </table>
 </div>
@@ -871,7 +871,7 @@ def knowledge():
   <h1 class="page-title">База знань</h1>
 </div>
 
-<div style="display:grid;grid-template-columns:3fr 2fr;gap:20px;margin-bottom:24px">
+<div style="display:grid;grid-template-columns:1fr 380px;gap:20px;margin-bottom:24px">
 
   <div class="card">
     <h2>Синхронізація Google Drive</h2>
@@ -922,7 +922,7 @@ def knowledge():
 
 <!-- Список файлов -->
 <div class="card">
-  <h2>Проіндексовані файли ({len(files)})</h2>
+  <h2>Проіндексовані файли <span style="font-weight:400;color:var(--text-muted)">{len(files)}</span></h2>
   <table>
     <thead><tr><th>Файл</th><th>Джерело</th><th>Завантажив</th><th>Проіндексовано</th><th></th></tr></thead>
     <tbody>{files_html}</tbody>
@@ -1212,15 +1212,15 @@ def users():
 
     content = f"""
 <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px">
-  <h1 class="page-title">Користувачі ({len(user_rows)})</h1>
+  <h1 class="page-title">Користувачі <span style="font-size:14px;font-weight:500;color:var(--text-muted);margin-left:8px">{len(user_rows)}</span></h1>
 </div>
 <div class="card">
   <table>
     <thead>
       <tr>
-        <th>Пользователь</th><th>Уровень</th><th>Статус</th>
-        <th>Запросов</th><th>Тесты</th><th>Онбординг</th>
-        <th>Последняя активность</th><th>Зарегистрирован</th>
+        <th>Користувач</th><th>Рівень</th><th>Статус</th>
+        <th>Запитів</th><th>Тести</th><th>Онбординг</th>
+        <th>Остання активність</th><th>Зареєстровано</th>
       </tr>
     </thead>
     <tbody>{rows_html}</tbody>
@@ -1833,7 +1833,7 @@ def access():
 
     content = f"""
 <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px">
-  <h1 class="page-title">Управління доступами ({len(rows)})</h1>
+  <h1 class="page-title">Управління доступами <span style="font-size:14px;font-weight:500;color:var(--text-muted);margin-left:8px">{len(rows)}</span></h1>
 </div>
 
 <div class="kpi-row" style="grid-template-columns:repeat(3,1fr)">
@@ -2336,7 +2336,7 @@ def _build_digest_html() -> str:
   <div class="card">
     <h2>Статистика по режимам</h2>
     <table>
-      <thead><tr><th>Режим</th><th>Запросов</th><th>Доля</th></tr></thead>
+      <thead><tr><th>Режим</th><th>Запитів</th><th>Частка</th></tr></thead>
       <tbody>{mode_rows or "<tr><td colspan='3' style='color:#aaa'>Нет данных</td></tr>"}</tbody>
     </table>
     <div style="margin-top:16px;display:flex;gap:16px">
