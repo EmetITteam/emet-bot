@@ -76,7 +76,7 @@ def set_security_headers(response):
         "style-src 'self' 'unsafe-inline' cdn.jsdelivr.net cdnjs.cloudflare.com fonts.googleapis.com; "
         "img-src 'self' data:; "
         "font-src 'self' cdnjs.cloudflare.com fonts.gstatic.com; "
-        "connect-src 'self' fonts.googleapis.com fonts.gstatic.com;"
+        "connect-src 'self' fonts.googleapis.com fonts.gstatic.com cdn.jsdelivr.net;"
     )
     return response
 
@@ -871,7 +871,7 @@ def knowledge():
   <h1 class="page-title">База знань</h1>
 </div>
 
-<div style="display:grid;grid-template-columns:1fr 380px;gap:20px;margin-bottom:24px">
+<div style="display:grid;grid-template-columns:1.5fr 1fr;gap:24px;margin-bottom:24px">
 
   <div class="card">
     <h2>Синхронізація Google Drive</h2>
