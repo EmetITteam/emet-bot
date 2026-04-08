@@ -321,7 +321,9 @@ BASE_HTML = """
   .sidebar nav a:hover { color: #fff; background: rgba(255,255,255,.08); }
   .sidebar nav a.active { color: #fff; background: rgba(255,255,255,.12);
                           border-left-color: #fff; font-weight: 600; }
-  .sidebar nav a .icon { width: 20px; text-align: center; font-size: 15px; }
+  .sidebar nav a .icon { width: 20px; text-align: center; font-size: 16px; opacity: .7; }
+  .sidebar nav a.active .icon { opacity: 1; }
+  .sidebar nav a i.lucide { font-size: 18px; width: 20px; text-align: center; }
   .sidebar .logout-wrap { padding: 16px 24px; border-top: 1px solid rgba(255,255,255,.12); }
   .sidebar .logout-wrap a { display: block; text-align: center; padding: 8px; border-radius: 8px;
                             color: rgba(255,255,255,.7); text-decoration: none; font-size: 13px;
@@ -353,11 +355,14 @@ BASE_HTML = """
 
   /* ── Tables ─────────────────────────────────────────────── */
   table { width: 100%; border-collapse: collapse; font-size: 13px; }
-  th { text-align: left; padding: 10px 14px; background: var(--muted);
-       color: #526484; font-weight: 600; font-size: 12px; text-transform: uppercase;
-       letter-spacing: .4px; border-bottom: 1px solid var(--border); }
-  td { padding: 10px 14px; border-bottom: 1px solid var(--border); vertical-align: middle; }
-  tr:hover td { background: var(--accent); }
+  th { text-align: left; padding: 11px 16px; background: transparent;
+       color: #8094ae; font-weight: 600; font-size: 11px; text-transform: uppercase;
+       letter-spacing: .6px; border-bottom: 2px solid var(--border); }
+  td { padding: 12px 16px; border-bottom: 1px solid var(--border); vertical-align: middle;
+       color: #364a63; }
+  tr:hover td { background: #f8fafc; }
+  td a { color: var(--emet-blue); text-decoration: none; font-weight: 500; }
+  td a:hover { text-decoration: underline; }
 
   /* ── Badges ─────────────────────────────────────────────── */
   .badge { display: inline-block; padding: 3px 10px; border-radius: 20px;
@@ -378,12 +383,10 @@ BASE_HTML = """
                  color: #fff; box-shadow: 0 2px 8px rgba(6,106,171,.25); }
   .btn-primary:hover { background: linear-gradient(135deg, var(--emet-blue-dark), var(--emet-blue));
                        box-shadow: 0 4px 16px rgba(6,106,171,.35); transform: translateY(-1px); }
-  .btn-danger  { background: linear-gradient(135deg, #c0392b, var(--red)); color: #fff;
-                 box-shadow: 0 2px 8px rgba(214,54,55,.2); }
-  .btn-danger:hover { box-shadow: 0 4px 12px rgba(214,54,55,.3); transform: translateY(-1px); }
-  .btn-success { background: linear-gradient(135deg, #16a34a, var(--green)); color: #fff;
-                 box-shadow: 0 2px 8px rgba(26,154,92,.2); }
-  .btn-success:hover { box-shadow: 0 4px 12px rgba(26,154,92,.3); transform: translateY(-1px); }
+  .btn-danger  { background: #fff; color: var(--red); border: 1.5px solid #fca5a5; }
+  .btn-danger:hover { background: #fef2f2; border-color: var(--red); }
+  .btn-success { background: linear-gradient(135deg, #16a34a, var(--green)); color: #fff; }
+  .btn-success:hover { opacity: .9; transform: translateY(-1px); }
   .btn-outline { background: transparent; color: var(--emet-blue);
                  border: 1.5px solid var(--emet-blue); }
   .btn-outline:hover { background: var(--emet-blue); color: #fff; }
@@ -433,6 +436,9 @@ BASE_HTML = """
     .charts-row { grid-template-columns: 1fr; }
   }
 </style>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/lucide-static@0.460.0/font/lucide.min.css">
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 </head>
 <body>
@@ -440,13 +446,13 @@ BASE_HTML = """
   <aside class="sidebar">
     <div class="logo">EMET<span>Admin Panel</span></div>
     <nav>
-      <a href="/" class="{{ 'active' if active=='dashboard' }}"><span class="icon">📊</span> Дашборд</a>
-      <a href="/knowledge" class="{{ 'active' if active=='knowledge' }}"><span class="icon">📚</span> База знань</a>
-      <a href="/users" class="{{ 'active' if active=='users' }}"><span class="icon">👥</span> Користувачі</a>
-      <a href="/learning" class="{{ 'active' if active=='learning' }}"><span class="icon">🎓</span> Навчання</a>
-      <a href="/access" class="{{ 'active' if active=='access' }}"><span class="icon">🔑</span> Доступи</a>
-      <a href="/quality" class="{{ 'active' if active=='quality' }}"><span class="icon">🔍</span> Якість</a>
-      <a href="/digest" class="{{ 'active' if active=='digest' }}"><span class="icon">📨</span> Дайджест</a>
+      <a href="/" class="{{ 'active' if active=='dashboard' }}"><i class="lucide lucide-bar-chart-3"></i> Дашборд</a>
+      <a href="/knowledge" class="{{ 'active' if active=='knowledge' }}"><i class="lucide lucide-book-open"></i> База знань</a>
+      <a href="/users" class="{{ 'active' if active=='users' }}"><i class="lucide lucide-users"></i> Користувачі</a>
+      <a href="/learning" class="{{ 'active' if active=='learning' }}"><i class="lucide lucide-graduation-cap"></i> Навчання</a>
+      <a href="/access" class="{{ 'active' if active=='access' }}"><i class="lucide lucide-shield-check"></i> Доступи</a>
+      <a href="/quality" class="{{ 'active' if active=='quality' }}"><i class="lucide lucide-scan-search"></i> Якість</a>
+      <a href="/digest" class="{{ 'active' if active=='digest' }}"><i class="lucide lucide-mail"></i> Дайджест</a>
     </nav>
     <div class="logout-wrap">
       <a href="/logout">Вийти</a>
