@@ -3190,6 +3190,7 @@ async def weekly_digest_task():
 
 async def daily_quality_task():
     """Щодня о 08:00 відправляє звіт якості ТІЛЬКИ адміну."""
+    from datetime import timedelta
     while True:
         now = datetime.now()
         tomorrow_8am = now.replace(hour=8, minute=0, second=0, microsecond=0)
