@@ -871,7 +871,7 @@ def knowledge():
   <h1 class="page-title">База знань</h1>
 </div>
 
-<div style="display:grid;grid-template-columns:1.5fr 1fr;gap:24px;margin-bottom:24px">
+<div style="display:flex;flex-direction:column;gap:20px;margin-bottom:24px">
 
   <div class="card">
     <h2>Синхронізація Google Drive</h2>
