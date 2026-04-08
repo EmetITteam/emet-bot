@@ -2000,12 +2000,23 @@ def digest_send():
 def quality_page():
     """Quality monitoring page — run analysis on demand."""
     last_report = ""
+    report_time = ""
     report_path = os.path.join(os.path.dirname(__file__), "data", "last_quality_report.txt")
     if os.path.exists(report_path):
         with open(report_path, "r", encoding="utf-8") as f:
             last_report = f.read()
+        mtime = os.path.getmtime(report_path)
+        report_time = datetime.fromtimestamp(mtime).strftime("%d.%m.%Y %H:%M")
+
+    # Check if analysis is running (lock file)
+    lock_path = os.path.join(os.path.dirname(__file__), "data", "quality_running.lock")
+    is_running = os.path.exists(lock_path)
+    # Auto-refresh if running
+    refresh_meta = "<meta http-equiv='refresh' content='5'>" if is_running else ""
+    running_badge = "<span style='color:#e65100;font-weight:600'>⏳ Аналіз виконується...</span>" if is_running else ""
 
     content = f"""
+{refresh_meta}
 <div style='margin-bottom:24px'>
   <h1 style='font-size:20px;font-weight:800'>🔍 Quality Monitor — моніторинг якості відповідей</h1>
 </div>
@@ -2016,11 +2027,14 @@ def quality_page():
     Звіт також автоматично відправляється адміну щодня о 08:00.
   </p>
   <form method='post' action='/quality/run'>
-    <button type='submit' class='btn btn-primary'>🔄 Запустити аналіз зараз</button>
+    <button type='submit' class='btn btn-primary' {'disabled' if is_running else ''}>
+      {'⏳ Аналіз виконується...' if is_running else '🔄 Запустити аналіз зараз'}
+    </button>
   </form>
+  {running_badge}
 </div>
 <div class='card'>
-  <h2>📋 Останній звіт</h2>
+  <h2>📋 Останній звіт {('(' + report_time + ')') if report_time else ''}</h2>
   <pre style='white-space:pre-wrap;font-size:13px;background:#f7f8fa;padding:16px;border-radius:8px;max-height:600px;overflow-y:auto'>{last_report or 'Звіт ще не створювався. Натисніть кнопку вище.'}</pre>
 </div>
 """
@@ -2031,20 +2045,41 @@ def quality_page():
 @login_required
 def quality_run():
     """Run quality analysis now."""
+    lock_path = os.path.join(os.path.dirname(__file__), "data", "quality_running.lock")
+    report_path = os.path.join(os.path.dirname(__file__), "data", "last_quality_report.txt")
+
     def _run():
         try:
-            from quality_monitor import run_monitor
-            report, findings = run_monitor()
+            # Create lock file
+            with open(lock_path, "w") as lf:
+                lf.write("running")
+
+            # Redirect stdout to avoid I/O errors in background thread
+            import io as _io
+            old_stdout = sys.stdout
+            sys.stdout = _io.TextIOWrapper(_io.BytesIO(), encoding='utf-8', errors='replace')
+            try:
+                from quality_monitor import run_monitor
+                report, findings = run_monitor()
+            finally:
+                sys.stdout = old_stdout
+
             if report:
-                report_path = os.path.join(os.path.dirname(__file__), "data", "last_quality_report.txt")
                 with open(report_path, "w", encoding="utf-8") as f:
                     f.write(report)
-                print(f"Quality report generated: {len(findings or [])} findings")
         except Exception as e:
-            print(f"Quality monitor error: {e}")
+            # Write error to report file so user sees it
+            with open(report_path, "w", encoding="utf-8") as f:
+                f.write(f"Error: {e}")
+        finally:
+            # Remove lock
+            try:
+                os.remove(lock_path)
+            except Exception:
+                pass
 
     threading.Thread(target=_run, daemon=True).start()
-    flash("✅ Аналіз запущено. Оновіть сторінку через 10-15 секунд.", "success")
+    flash("✅ Аналіз запущено. Сторінка оновиться автоматично.", "success")
     return redirect(url_for("quality_page"))
 
 
