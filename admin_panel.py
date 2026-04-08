@@ -418,6 +418,8 @@ BASE_HTML = """
   .text-muted{color:var(--text-muted);font-size:12px}
   .text-green{color:var(--green);font-weight:600}
   .text-red{color:var(--red);font-weight:600}
+  .del-icon{display:inline-flex;align-items:center;justify-content:center;width:32px;height:32px;border-radius:8px;color:#94a3b8;transition:all .2s;text-decoration:none;cursor:pointer}
+  .del-icon:hover{background:#fef2f2;color:var(--red)}
   pre{font-family:var(--font-mono);font-size:12.5px}
 
   /* ── Responsive ─────────────────────────────────────────── */
@@ -853,8 +855,12 @@ def knowledge():
         safe_fn = html_escape(fn)
         confirm_del = json.dumps("Видалити " + fn + " з бази знань?")
         delete_btn = (
-            f"<a href='/knowledge/delete/{fid}' style='color:var(--red);font-size:12px;font-weight:500;text-decoration:none' "
-            f"onclick='return confirm({confirm_del})'>Видалити</a>"
+            f"<a href='/knowledge/delete/{fid}' class='del-icon' "
+            f"onclick='return confirm({confirm_del})' title='Видалити'>"
+            f"<svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'>"
+            f"<path d='M3 6h18'/><path d='M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2'/>"
+            f"<path d='M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6'/>"
+            f"<line x1='10' y1='11' x2='10' y2='17'/><line x1='14' y1='11' x2='14' y2='17'/></svg></a>"
         )
         files_html += (
             f"<tr><td style='overflow:hidden;text-overflow:ellipsis;white-space:nowrap'>{safe_fn}</td>"
@@ -1602,7 +1608,11 @@ def learning():
             f"<td style='text-align:center'>"
             f"<form method='post' action='/learning/course/delete/{cid}' style='display:inline' "
             f"onsubmit='return confirm(\"{confirm_msg}\")'>"
-            f"<button type='submit' class='btn btn-sm btn-danger'>Видалити</button></form>"
+            f"<button type='submit' class='del-icon' title='Видалити'>"
+            f"<svg width='16' height='16' viewBox='0 0 24 24' fill='none' stroke='currentColor' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'>"
+            f"<path d='M3 6h18'/><path d='M8 6V4a2 2 0 012-2h4a2 2 0 012 2v2'/>"
+            f"<path d='M19 6l-1 14a2 2 0 01-2 2H8a2 2 0 01-2-2L5 6'/>"
+            f"<line x1='10' y1='11' x2='10' y2='17'/><line x1='14' y1='11' x2='14' y2='17'/></svg></button></form>"
             f"</td>"
             f"</tr>"
         )
