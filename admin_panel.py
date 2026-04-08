@@ -853,7 +853,7 @@ def knowledge():
         safe_fn = html_escape(fn)
         confirm_del = json.dumps("Видалити " + fn + " з бази знань?")
         delete_btn = (
-            f"<a href='/knowledge/delete/{fid}' class='btn btn-danger btn-sm' "
+            f"<a href='/knowledge/delete/{fid}' style='color:var(--red);font-size:12px;font-weight:500;text-decoration:none' "
             f"onclick='return confirm({confirm_del})'>Видалити</a>"
         )
         files_html += (
@@ -923,10 +923,12 @@ def knowledge():
 <!-- Список файлов -->
 <div class="card">
   <h2>Проіндексовані файли <span style="font-weight:400;color:var(--text-muted)">{len(files)}</span></h2>
+  <div style="overflow-x:auto">
   <table>
-    <thead><tr><th>Файл</th><th>Джерело</th><th>Завантажив</th><th>Проіндексовано</th><th></th></tr></thead>
+    <thead><tr><th>Файл</th><th style="width:80px">Джерело</th><th style="width:100px">Завантажив</th><th style="width:140px">Проіндексовано</th><th style="width:70px"></th></tr></thead>
     <tbody>{files_html}</tbody>
   </table>
+  </div>
 </div>
 
 <!-- Кошик -->
