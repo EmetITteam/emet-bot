@@ -688,7 +688,7 @@ def dashboard():
 
     content = f"""
 <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px">
-  <h1 style="font-size:20px;font-weight:800">📊 Дашборд</h1>
+  <h1 class="page-title">Дашборд</h1>
   <form method="get" style="display:flex;gap:10px;align-items:center">
     <input class="form-control" style="width:140px" type="date" name="from" value="{date_from}">
     <span style="color:#888">—</span>
@@ -729,14 +729,14 @@ def dashboard():
 
 <div class="kpi-row" style="margin-top:0">
   <div class="kpi"><div class="val">{fb_total}</div><div class="lbl">Оцінок отримано</div></div>
-  <div class="kpi"><div class="val" style="color:#4caf50">{fb_positive} 👍</div><div class="lbl">Позитивних</div></div>
-  <div class="kpi"><div class="val" style="color:#e94560">{fb_negative} 👎</div><div class="lbl">Негативних</div></div>
+  <div class="kpi"><div class="val" style="color:#4caf50">{fb_positive}</div><div class="lbl">Позитивних</div></div>
+  <div class="kpi"><div class="val" style="color:#e94560">{fb_negative}</div><div class="lbl">Негативних</div></div>
   <div class="kpi"><div class="val">{fb_pct}%</div><div class="lbl">Задоволеність</div></div>
 </div>
 
-<div class="card"><h2>👍👎 Оцінки по режимах</h2>
+<div class="card"><h2>Оцінки по режимах</h2>
   <table>
-    <thead><tr><th>Режим</th><th>👍</th><th>👎</th><th>%</th></tr></thead>
+    <thead><tr><th>Режим</th><th>+</th><th>-</th><th>%</th></tr></thead>
     <tbody>{"".join(
       f"<tr><td>{m}</td><td style='color:#4caf50'>{v['up']}</td><td style='color:#e94560'>{v['dn']}</td>"
       f"<td>{round(v['up']/(v['up']+v['dn'])*100) if v['up']+v['dn'] else 0}%</td></tr>"
@@ -808,7 +808,7 @@ def _build_trash_html(trash: list) -> str:
         )
     return f"""
 <div class="card" style="border-left:4px solid #e94560">
-  <h2>🗑 Кошик — видалені файли ({len(unique)})</h2>
+  <h2>Кошик — видалені файли ({len(unique)})</h2>
   <p class="text-muted" style="margin-bottom:16px;font-size:13px">
     Файли зберігаються 30 днів після видалення. Після цього — видаляються назавжди.
   </p>
@@ -854,7 +854,7 @@ def knowledge():
         confirm_del = json.dumps("Видалити " + fn + " з бази знань?")
         delete_btn = (
             f"<a href='/knowledge/delete/{fid}' class='btn btn-danger btn-sm' "
-            f"onclick='return confirm({confirm_del})'>🗑 Видалити</a>"
+            f"onclick='return confirm({confirm_del})'>Видалити</a>"
         )
         files_html += (
             f"<tr><td>{safe_fn}</td>"
@@ -864,11 +864,11 @@ def knowledge():
             f"<td>{delete_btn}</td></tr>"
         )
     if not files_html:
-        files_html = "<tr><td colspan='5' style='text-align:center;color:#aaa;padding:24px'>Файлов нет</td></tr>"
+        files_html = "<tr><td colspan='5' style='text-align:center;color:#aaa;padding:24px'>Файлів поки немає</td></tr>"
 
     content = f"""
 <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px">
-  <h1 style="font-size:20px;font-weight:800">📚 База знаний</h1>
+  <h1 class="page-title">База знань</h1>
 </div>
 
 <!-- Методы загрузки -->
@@ -876,7 +876,7 @@ def knowledge():
 
   <!-- Метод 1: Google Drive (авто) -->
   <div class="card">
-    <h2>☁️ Автосинхронизация Google Drive</h2>
+    <h2>Синхронізація Google Drive</h2>
     <div class="sync-status">
       <div class="dot-green"></div>
       <div>
@@ -889,37 +889,36 @@ def knowledge():
       <b>{{ interval_min }} минут</b>. Новые и изменённые файлы переиндексируются.
     </p>
     <form method="post" action="/knowledge/sync">
-      <button class="btn btn-primary" type="submit">🔄 Запустить синхронизацию сейчас</button>
+      <button class="btn btn-primary" type="submit">Синхронізувати</button>
     </form>
   </div>
 
   <!-- Метод 2: Ручная загрузка -->
   <div class="card">
-    <h2>📤 Ручная загрузка файла</h2>
+    <h2>Завантажити файл</h2>
     <p style="font-size:13px;color:#666;margin-bottom:16px">
-      Загрузите файл напрямую в базу знаний. Поддерживаются: <b>PDF, DOCX, TXT</b>.
-      Файл будет проиндексирован в обоих векторных индексах (OpenAI + Google).
+      Завантажте файл напряму в базу знань. Підтримуються: <b>PDF, DOCX, TXT</b>.
+      Файл буде проіндексовано.
     </p>
     <form method="post" action="/knowledge/upload" enctype="multipart/form-data" id="uploadForm">
       <div class="upload-zone" onclick="document.getElementById('fileInput').click()" id="dropZone">
         <input type="file" name="file" id="fileInput" accept=".pdf,.docx,.txt,.md"
                onchange="showFileName(this)">
         <div id="dropLabel">
-          <div style="font-size:32px;margin-bottom:8px">📁</div>
-          <div style="font-size:15px;font-weight:600;color:#0f3460">Выберите файл</div>
+          <div style="font-size:15px;font-weight:600;color:#0f3460">Оберіть файл</div>
           <div class="text-muted" style="margin-top:4px">PDF, DOCX, TXT — до 20 МБ</div>
         </div>
       </div>
       <div style="margin-top:14px">
         <label style="font-size:13px;font-weight:600;color:#444;display:block;margin-bottom:6px">Категорія індексу</label>
-        <select name="category" style="width:100%;padding:9px 12px;border:1px solid #ddd;border-radius:8px;font-size:14px;background:#f9f9f9">
-          <option value="kb">📚 База знань (регламенти, правила)</option>
-          <option value="coach">💼 Коуч (продажі, аргументи, скрипти)</option>
-          <option value="both">📚+💼 Обидва індекси</option>
+        <select name="category" class="form-control">
+          <option value="kb">База знань (регламенти)</option>
+          <option value="coach">Коуч (продажі, аргументи)</option>
+          <option value="both">Обидва індекси</option>
         </select>
       </div>
       <div style="margin-top:12px">
-        <button class="btn btn-success" type="submit" style="width:100%">⬆️ Загрузить и проиндексировать</button>
+        <button class="btn btn-primary" type="submit" style="width:100%">Завантажити та проіндексувати</button>
       </div>
     </form>
   </div>
@@ -941,8 +940,8 @@ def knowledge():
 function showFileName(input) {{
   if (input.files.length > 0) {{
     document.getElementById('dropLabel').innerHTML =
-      '<div style="font-size:24px">✅</div><div style="font-weight:600;color:#2e7d32">' +
-      input.files[0].name + '</div><div class="text-muted">Готово к загрузке</div>';
+      '<div style="font-weight:600;color:#2e7d32">' +
+      input.files[0].name + '</div><div class="text-muted">Готово до завантаження</div>';
   }}
 }}
 </script>
@@ -985,7 +984,7 @@ def knowledge_upload():
                              category=category)
     if ok:
         cat_label = {"kb": "База знань", "coach": "Коуч", "both": "База знань + Коуч"}.get(category, category)
-        flash(f"✅ «{fname}» відправлено на індексацію ({cat_label}). Файл з'явиться в списку за кілька секунд.", "success")
+        flash(f"«{fname}» відправлено на індексацію ({cat_label}). Файл з'явиться в списку за кілька секунд.", "success")
     else:
         flash(f"Ошибка индексации: {msg}", "danger")
     return redirect(url_for("knowledge"))
@@ -1004,7 +1003,7 @@ def knowledge_delete(file_id):
         # Видаляємо з sync_state
         db_exec("DELETE FROM sync_state WHERE file_id=%s", (file_id,))
 
-        flash(f"✅ «{fname}» видалено ({deleted_chunks} чанків з індексу).", "success")
+        flash(f"«{fname}» видалено ({deleted_chunks} чанків з індексу).", "success")
     except Exception as e:
         flash(f"Помилка видалення: {e}", "danger")
     return redirect(url_for("knowledge"))
@@ -1116,7 +1115,7 @@ def _restore_to_chroma(deleted_id: int) -> tuple[str, int]:
 def knowledge_restore(deleted_id):
     try:
         fname, count = _restore_to_chroma(deleted_id)
-        flash(f"✅ «{fname}» відновлено ({count} чанків повернуто в індекс).", "success")
+        flash(f"«{fname}» відновлено ({count} чанків повернуто в індекс).", "success")
     except Exception as e:
         flash(f"Помилка відновлення: {e}", "danger")
     return redirect(url_for("knowledge"))
@@ -1133,7 +1132,7 @@ def knowledge_sync():
             print(f"Manual sync error: {e}")
 
     threading.Thread(target=_run, daemon=True).start()
-    flash("🔄 Синхронизация с Google Drive запущена в фоне. Обновите страницу через 1-2 минуты.", "info")
+    flash("Синхронізацію з Google Drive запущено у фоні. Оновіть сторінку через 1-2 хвилини.", "info")
     return redirect(url_for("knowledge"))
 
 
@@ -1177,8 +1176,8 @@ def users():
         pass
 
     LEVEL_ICONS = {
-        "junior": "📈 Junior", "middle": "💼 Middle",
-        "senior": "⭐️ Senior", "top": "🏆 Top", "novice": "🌱 Новачок"
+        "junior": "Junior", "middle": "Middle",
+        "senior": "Senior", "top": "Top", "novice": "Новачок"
     }
 
     rows_html = ""
@@ -1217,7 +1216,7 @@ def users():
 
     content = f"""
 <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px">
-  <h1 style="font-size:20px;font-weight:800">👥 Пользователи ({len(user_rows)})</h1>
+  <h1 class="page-title">Користувачі ({len(user_rows)})</h1>
 </div>
 <div class="card">
   <table>
@@ -1395,22 +1394,22 @@ def learning_upload():
     try:
         title, description, topics, topic_order = _parse_course_xlsx(data)
     except ValueError as e:
-        flash(f"❌ Помилка парсингу: {e}", "danger")
+        flash(f"Помилка парсингу: {e}", "danger")
         return redirect(url_for("learning"))
     except Exception as e:
-        flash(f"❌ Не вдалося прочитати файл: {e}", "danger")
+        flash(f"Не вдалося прочитати файл: {e}", "danger")
         return redirect(url_for("learning"))
 
     try:
         course_id, overwritten = _save_course_to_db(title, description, topics, topic_order)
     except Exception as e:
-        flash(f"❌ Помилка запису в БД: {e}", "danger")
+        flash(f"Помилка запису в БД: {e}", "danger")
         return redirect(url_for("learning"))
 
     total_q = sum(len(t["questions"]) for t in topics.values())
     action = "оновлено" if overwritten else "додано"
     flash(
-        f"✅ Курс «{title}» {action}: {len(topic_order)} тем, {total_q} питань (id={course_id})",
+        f"Курс «{title}» {action}: {len(topic_order)} тем, {total_q} питань (id={course_id})",
         "success"
     )
     return redirect(url_for("learning"))
@@ -1433,9 +1432,9 @@ def learning_course_delete(course_id):
         db_exec("DELETE FROM questions WHERE topic_id IN (SELECT id FROM topics WHERE course_id=%s)", (course_id,))
         db_exec("DELETE FROM topics WHERE course_id=%s", (course_id,))
         db_exec("DELETE FROM courses WHERE id=%s", (course_id,))
-        flash(f"🗑 Курс «{title}» видалено", "success")
+        flash(f"Курс «{title}» видалено", "success")
     except Exception as e:
-        flash(f"❌ Помилка видалення: {e}", "danger")
+        flash(f"Помилка видалення: {e}", "danger")
     return redirect(url_for("learning"))
 
 
@@ -1521,7 +1520,7 @@ def learning_index_courses():
 
     cat_label = {"kb": "База знань", "coach": "Коуч", "both": "База знань + Коуч"}.get(category, category)
     flash(
-        f"✅ Запущено індексацію {len(topic_list)} тем у розділ «{cat_label}». "
+        f"Запущено індексацію {len(topic_list)} тем у розділ «{cat_label}». "
         f"Дані з'являться в RAG за 2–3 хвилини.",
         "success"
     )
@@ -1607,14 +1606,14 @@ def learning():
             f"<td style='text-align:center'>"
             f"<form method='post' action='/learning/course/delete/{cid}' style='display:inline' "
             f"onsubmit='return confirm(\"{confirm_msg}\")'>"
-            f"<button type='submit' class='btn btn-sm btn-danger'>🗑</button></form>"
+            f"<button type='submit' class='btn btn-sm btn-danger'>Видалити</button></form>"
             f"</td>"
             f"</tr>"
         )
 
     course_table = f"""
 <div class='card'>
-  <h2>📋 Зведення по курсах</h2>
+  <h2>Зведення по курсах</h2>
   <table>
     <tr>
       <th>Курс</th>
@@ -1663,7 +1662,7 @@ def learning():
                     date_s = (prog["last_date"] or "")[:10]
                     scores.append(score)
                     color  = "#2e7d32" if passed else "#c62828"
-                    icon   = "✅" if passed else "❌"
+                    icon   = "+" if passed else "-"
                     topic_cells += (
                         f"<td style='text-align:center'>"
                         f"<span style='color:{color};font-weight:700'>{icon} {score}%</span>"
@@ -1695,7 +1694,7 @@ def learning():
 
         detail_html += f"""
 <div class='card'>
-  <h2>🎓 {c['title']}</h2>
+  <h2>{c['title']}</h2>
   <p style='font-size:13px;color:#666;margin-bottom:16px'>{c.get('description') or ''}</p>
   <div style='overflow-x:auto'>
   <table>
@@ -1710,7 +1709,7 @@ def learning():
 
     upload_card = """
 <div class='card'>
-  <h2>📤 Завантажити курс (.xlsx)</h2>
+  <h2>Завантажити курс (.xlsx)</h2>
   <p style='font-size:13px;color:#666;margin-bottom:16px'>
     Завантажте файл у форматі Excel-шаблону EMET. Якщо курс з такою назвою вже існує — він буде оновлений автоматично.
     <a href='/learning/template' style='color:#0f3460;font-weight:600'>⬇ Скачати шаблон</a>
@@ -1719,16 +1718,16 @@ def learning():
     <div style='display:flex;gap:12px;align-items:center;flex-wrap:wrap'>
       <label class='upload-zone' style='padding:16px 24px;cursor:pointer;flex:1;min-width:240px'>
         <input type='file' name='file' accept='.xlsx' onchange='this.closest("form").querySelector(".fname").textContent=this.files[0]?.name||""'>
-        <span style='font-size:22px'>📁</span>
+        <span style='font-size:14px;color:#555'>Файл .xlsx</span>
         <span style='display:block;margin-top:4px;font-size:13px;color:#555'>Клікніть або перетягніть .xlsx файл</span>
         <span class='fname' style='display:block;margin-top:4px;font-size:12px;color:#0f3460;font-weight:600'></span>
       </label>
-      <button type='submit' class='btn btn-success' style='white-space:nowrap'>✅ Завантажити курс</button>
+      <button type='submit' class='btn btn-primary' style='white-space:nowrap'>Завантажити курс</button>
     </div>
   </form>
 </div>
 <div class='card'>
-  <h2>🧠 Додати теми курсів до бази знань (RAG)</h2>
+  <h2>Додати теми курсів до бази знань (RAG)</h2>
   <p style='font-size:13px;color:#666;margin-bottom:16px'>
     Всі теми з навчальних курсів будуть проіндексовані у векторну базу — бот зможе відповідати на запитання
     про препарати на основі матеріалів з курсів. Оберіть розділ, куди потрапить інформація.
@@ -1736,13 +1735,13 @@ def learning():
   <form method='post' action='/learning/index_courses'>
     <div style='display:flex;gap:12px;align-items:center;flex-wrap:wrap'>
       <select name='category' class='form-control' style='width:auto;min-width:200px'>
-        <option value='coach'>💼 Sales Коуч (рекомендовано)</option>
-        <option value='kb'>📚 База знань</option>
-        <option value='both'>📚+💼 База знань + Коуч</option>
+        <option value='coach'>Sales Коуч (рекомендовано)</option>
+        <option value='kb'>База знань</option>
+        <option value='both'>База знань + Коуч</option>
       </select>
       <button type='submit' class='btn btn-primary' style='white-space:nowrap'
         onclick="return confirm('Проіндексувати всі теми курсів у RAG?')">
-        🔄 Індексувати всі теми курсів
+        Індексувати всі теми курсів
       </button>
     </div>
   </form>
@@ -1750,7 +1749,7 @@ def learning():
 
     content = f"""
 <div style='margin-bottom:24px'>
-  <h1 style='font-size:20px;font-weight:800'>🎓 Навчання — прогрес команди</h1>
+  <h1 class='page-title'>Навчання — прогрес команди</h1>
 </div>
 {upload_card}
 {kpi_html}
@@ -1807,9 +1806,9 @@ def access():
     for r in rows:
         activated = r.get("activated_by_user_id")
         if activated:
-            status_cell = "<span class='badge' style='background:#e8f5e9;color:#2e7d32'>✅ Активний</span>"
+            status_cell = "<span class='badge' style='background:#e8f5e9;color:#2e7d32'>Активний</span>"
         else:
-            status_cell = user_select(r["id"]) if tg_users else "<span class='badge' style='background:#fff3e0;color:#e65100'>⏳ Очікує</span>"
+            status_cell = user_select(r["id"]) if tg_users else "<span class='badge' style='background:#fff3e0;color:#e65100'>Очікує</span>"
 
         role_style = role_colors.get(r.get("role", ""), "#f5f5f5;color:#333")
         role_badge = f"<span class='badge' style='background:{role_style}'>{r.get('role','')}</span>"
@@ -1838,7 +1837,7 @@ def access():
 
     content = f"""
 <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px">
-  <h1 style="font-size:20px;font-weight:800">🔑 Управління доступами ({len(rows)})</h1>
+  <h1 class="page-title">Управління доступами ({len(rows)})</h1>
 </div>
 
 <div class="kpi-row" style="grid-template-columns:repeat(3,1fr)">
@@ -1851,7 +1850,7 @@ def access():
 
   <!-- Excel завантаження -->
   <div class="card">
-    <h2>📊 Завантажити список з Excel</h2>
+    <h2>Завантажити список з Excel</h2>
     <p style="font-size:13px;color:#666;margin-bottom:16px">
       Файл Excel (.xlsx) або CSV з колонками:<br>
       <b>email</b> (обов'язково) · <b>role</b> (admin/manager/operator) · <b>name</b> (ім'я, необов'язково)<br>
@@ -1862,17 +1861,17 @@ def access():
         <input type="file" name="file" id="excelInput" accept=".xlsx,.csv"
                onchange="document.getElementById('excelLabel').textContent=this.files[0].name">
         <div>
-          <div style="font-size:28px;margin-bottom:6px">📋</div>
+          <div style="font-size:14px;margin-bottom:6px;color:#555">Файл</div>
           <div style="font-size:14px;font-weight:600;color:#0f3460" id="excelLabel">Обрати файл .xlsx або .csv</div>
         </div>
       </div>
-      <button class="btn btn-primary" type="submit" style="width:100%;margin-top:14px">⬆️ Завантажити</button>
+      <button class="btn btn-primary" type="submit" style="width:100%;margin-top:14px">Завантажити</button>
     </form>
   </div>
 
   <!-- Додати вручну -->
   <div class="card">
-    <h2>✏️ Додати вручну</h2>
+    <h2>Додати вручну</h2>
     <form method="post" action="/access/add">
       <div class="form-group">
         <label>Email *</label>
@@ -1891,7 +1890,7 @@ def access():
         <label>Ім'я (необов'язково)</label>
         <input class="form-control" type="text" name="full_name" placeholder="Іванов Іван">
       </div>
-      <button class="btn btn-success" type="submit" style="width:100%">➕ Додати</button>
+      <button class="btn btn-primary" type="submit" style="width:100%">Додати</button>
     </form>
   </div>
 </div>
@@ -1930,7 +1929,7 @@ def access_add():
             "ON CONFLICT(email) DO UPDATE SET role=EXCLUDED.role, full_name=EXCLUDED.full_name",
             (email, role, name)
         )
-        flash(f"✅ Email {email} додано з роллю {role}", "success")
+        flash(f"Email {email} додано з роллю {role}", "success")
     except Exception as e:
         flash(f"Помилка: {e}", "danger")
     return redirect(url_for("access"))
@@ -1959,7 +1958,7 @@ def access_activate(email_id):
             "UPDATE users SET role=%s, is_active=1 WHERE user_id=%s",
             (role, user_id)
         )
-        flash(f"✅ {email} активовано для користувача {user_id} з роллю {role}", "success")
+        flash(f"{email} активовано для користувача {user_id} з роллю {role}", "success")
     except Exception as e:
         flash(f"Помилка: {e}", "danger")
     return redirect(url_for("access"))
@@ -1970,7 +1969,7 @@ def access_activate(email_id):
 def access_delete(email_id):
     try:
         db_exec("DELETE FROM allowed_emails WHERE id=%s", (email_id,))
-        flash("✅ Email видалено", "success")
+        flash("Email видалено", "success")
     except Exception as e:
         flash(f"Помилка: {e}", "danger")
     return redirect(url_for("access"))
@@ -2055,7 +2054,7 @@ def access_upload():
         except Exception as e:
             errors.append(f"Рядок {i}: {e}")
 
-    msg = f"✅ Імпортовано: {added}"
+    msg = f"Імпортовано: {added}"
     if skipped:
         msg += f" | Пропущено (порожні): {skipped}"
     if errors:
@@ -2119,7 +2118,7 @@ def _send_digest_now():
 def digest_send():
     """Отправить дайджест в Telegram прямо сейчас."""
     threading.Thread(target=_send_digest_now, daemon=True).start()
-    flash("✅ Дайджест отправлен в Telegram администраторам и директорам.", "success")
+    flash("Дайджест відправлено в Telegram адміністраторам і директорам.", "success")
     return redirect(url_for("digest_page"))
 
 
@@ -2141,28 +2140,28 @@ def quality_page():
     is_running = os.path.exists(lock_path)
     # Auto-refresh if running
     refresh_meta = "<meta http-equiv='refresh' content='5'>" if is_running else ""
-    running_badge = "<span style='color:#e65100;font-weight:600'>⏳ Аналіз виконується...</span>" if is_running else ""
+    running_badge = "<span style='color:#e65100;font-weight:600'>Аналіз виконується...</span>" if is_running else ""
 
     content = f"""
 {refresh_meta}
 <div style='margin-bottom:24px'>
-  <h1 style='font-size:20px;font-weight:800'>🔍 Quality Monitor — моніторинг якості відповідей</h1>
+  <h1 class='page-title'>Quality Monitor — моніторинг якості відповідей</h1>
 </div>
 <div class='card'>
-  <h2>📊 Запустити аналіз</h2>
+  <h2>Запустити аналіз</h2>
   <p style='font-size:13px;color:#666;margin-bottom:16px'>
     Аналіз діалогів за останні 24 години: хибні відповіді, пропуски RAG, крос-сейл, суперечності.
     Звіт також автоматично відправляється адміну щодня о 08:00.
   </p>
   <form method='post' action='/quality/run'>
     <button type='submit' class='btn btn-primary' {'disabled' if is_running else ''}>
-      {'⏳ Аналіз виконується...' if is_running else '🔄 Запустити аналіз зараз'}
+      {'Аналіз виконується...' if is_running else 'Запустити аналіз зараз'}
     </button>
   </form>
   {running_badge}
 </div>
 <div class='card'>
-  <h2>📋 Останній звіт {('(' + report_time + ')') if report_time else ''}</h2>
+  <h2>Останній звіт {('(' + report_time + ')') if report_time else ''}</h2>
   <pre style='white-space:pre-wrap;font-size:13px;background:#f7f8fa;padding:16px;border-radius:8px;max-height:600px;overflow-y:auto'>{last_report or 'Звіт ще не створювався. Натисніть кнопку вище.'}</pre>
 </div>
 """
@@ -2215,7 +2214,7 @@ def quality_run():
                 pass
 
     threading.Thread(target=_run, daemon=True).start()
-    flash("✅ Аналіз запущено. Сторінка оновиться автоматично.", "success")
+    flash("Аналіз запущено. Сторінка оновиться автоматично.", "success")
     return redirect(url_for("quality_page"))
 
 
@@ -2321,9 +2320,9 @@ def _build_digest_html() -> str:
 
     return f"""
 <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px">
-  <h1 style="font-size:20px;font-weight:800">📨 Еженедельный дайджест</h1>
+  <h1 class="page-title">Щотижневий дайджест</h1>
   <form method="post" action="/digest/send">
-    <button class="btn btn-primary" type="submit">📤 Отправить в Telegram сейчас</button>
+    <button class="btn btn-primary" type="submit">Відправити в Telegram</button>
   </form>
 </div>
 <p style="font-size:13px;color:#888;margin-bottom:20px">
@@ -2374,7 +2373,7 @@ def _build_digest_html() -> str:
 if __name__ == "__main__":
     port = int(os.getenv("ADMIN_PORT", "5000"))
     db_url = os.getenv("DATABASE_URL", "postgresql://emet:emet2026@localhost:5432/emet_bot")
-    print(f"\n🤖 EMET Admin Panel")
+    print(f"\nEMET Admin Panel")
     print(f"   URL:      http://localhost:{port}")
     print(f"   Пароль:   {ADMIN_PASSWORD}")
     print(f"   БД:       {db_url}\n")
