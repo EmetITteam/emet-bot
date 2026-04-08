@@ -332,7 +332,7 @@ BASE_HTML = """
   .mobile-toggle{display:none;position:fixed;top:16px;left:16px;z-index:200;background:var(--primary);color:#fff;border:none;width:40px;height:40px;border-radius:var(--radius-xs);font-size:20px;cursor:pointer;box-shadow:0 2px 12px rgba(6,106,171,.25);align-items:center;justify-content:center}
 
   /* ── Main Content ──────────────────────────────────────── */
-  .main{margin-left:var(--sidebar-w);flex:1;min-height:100vh}
+  .main{margin-left:var(--sidebar-w);flex:1;min-height:100vh;padding:32px 40px;max-width:calc(100vw - var(--sidebar-w));overflow-x:hidden}
   .topbar{position:sticky;top:0;z-index:50;background:rgba(255,255,255,.82);backdrop-filter:blur(12px);border-bottom:1px solid var(--border);padding:16px 32px;display:flex;align-items:center;justify-content:space-between}
   .topbar h1{font-family:var(--font-heading);font-weight:700;font-size:24px;color:var(--text-dark)}
   .content-area{padding:24px 32px 40px}
