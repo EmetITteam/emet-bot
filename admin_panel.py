@@ -857,10 +857,10 @@ def knowledge():
             f"onclick='return confirm({confirm_del})'>Видалити</a>"
         )
         files_html += (
-            f"<tr><td>{safe_fn}</td>"
+            f"<tr><td style='overflow:hidden;text-overflow:ellipsis;white-space:nowrap'>{safe_fn}</td>"
             f"<td>{badge}</td>"
-            f"<td class='text-muted'>{uploader}</td>"
-            f"<td class='text-muted'>{(f.get('indexed_at') or '')[:16]}</td>"
+            f"<td class='text-muted' style='font-size:12px'>{uploader}</td>"
+            f"<td class='text-muted' style='font-size:12px'>{(f.get('indexed_at') or '')[:10]}</td>"
             f"<td>{delete_btn}</td></tr>"
         )
     if not files_html:
@@ -923,12 +923,10 @@ def knowledge():
 <!-- Список файлов -->
 <div class="card">
   <h2>Проіндексовані файли <span style="font-weight:400;color:var(--text-muted)">{len(files)}</span></h2>
-  <div style="overflow-x:auto">
-  <table>
-    <thead><tr><th>Файл</th><th style="width:80px">Джерело</th><th style="width:100px">Завантажив</th><th style="width:140px">Проіндексовано</th><th style="width:70px"></th></tr></thead>
+  <table style="table-layout:fixed;width:100%">
+    <thead><tr><th style="width:auto">Файл</th><th style="width:70px">Джерело</th><th style="width:90px">Хто</th><th style="width:130px">Дата</th><th style="width:60px"></th></tr></thead>
     <tbody>{files_html}</tbody>
   </table>
-  </div>
 </div>
 
 <!-- Кошик -->
