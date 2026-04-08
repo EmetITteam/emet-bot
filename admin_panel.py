@@ -871,29 +871,25 @@ def knowledge():
   <h1 class="page-title">База знань</h1>
 </div>
 
-<!-- Методы загрузки -->
-<div style="display:grid;grid-template-columns:1fr 1fr;gap:20px;margin-bottom:20px">
+<div style="display:grid;grid-template-columns:3fr 2fr;gap:20px;margin-bottom:24px">
 
-  <!-- Метод 1: Google Drive (авто) -->
   <div class="card">
     <h2>Синхронізація Google Drive</h2>
     <div class="sync-status">
       <div class="dot-green"></div>
       <div>
-        <div style="font-size:14px;font-weight:600">Google Drive подключён</div>
-        <div class="text-muted">Файлы: PDF, DOCX, Google Docs/Sheets — синхронизируются автоматически</div>
+        <div style="font-size:14px;font-weight:600">Google Drive підключено</div>
+        <div class="text-muted">PDF, DOCX, Google Docs/Sheets — синхронізуються автоматично</div>
       </div>
     </div>
-    <p style="font-size:13px;color:#666;margin-bottom:16px">
-      Бот автоматически проверяет изменения в Drive каждые
-      <b>{{ interval_min }} минут</b>. Новые и изменённые файлы переиндексируются.
+    <p style="font-size:13px;color:var(--text-light);margin-bottom:16px">
+      Бот перевіряє зміни в Drive кожні <b>60 хвилин</b>. Нові та змінені файли переіндексуються.
     </p>
     <form method="post" action="/knowledge/sync">
       <button class="btn btn-primary" type="submit">Синхронізувати</button>
     </form>
   </div>
 
-  <!-- Метод 2: Ручная загрузка -->
   <div class="card">
     <h2>Завантажити файл</h2>
     <p style="font-size:13px;color:#666;margin-bottom:16px">
