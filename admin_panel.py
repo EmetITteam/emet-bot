@@ -2049,31 +2049,38 @@ def quality_run():
     report_path = os.path.join(os.path.dirname(__file__), "data", "last_quality_report.txt")
 
     def _run():
-        import sys as _sys
         try:
-            # Create lock file
             with open(lock_path, "w") as lf:
                 lf.write("running")
 
-            # Redirect stdout to avoid I/O errors in background thread
-            import io as _io
-            old_stdout = _sys.stdout
-            _sys.stdout = _io.TextIOWrapper(_io.BytesIO(), encoding='utf-8', errors='replace')
-            try:
-                from quality_monitor import run_monitor
-                report, findings = run_monitor()
-            finally:
-                _sys.stdout = old_stdout
+            # Import and patch quality_monitor to not touch sys.stdout
+            import quality_monitor as qm
+            import db as _db
+            from datetime import datetime as _dt, timedelta as _td
 
-            if report:
-                with open(report_path, "w", encoding="utf-8") as f:
-                    f.write(report)
+            # Run analysis directly without quality_monitor's stdout wrapper
+            since = (_dt.now() - _td(hours=24)).strftime("%Y-%m-%d %H:%M:%S")
+            dialogs = _db.query_dict(
+                "SELECT id, date, user_id, username, mode, model, found_in_db, "
+                "question, answer, tokens_in, tokens_out "
+                "FROM logs WHERE date >= %s ORDER BY id", (since,)
+            )
+
+            all_findings = []
+            if dialogs:
+                for d in dialogs:
+                    all_findings.extend(qm.analyze_dialog(d))
+                all_findings.extend(qm.detect_contradictions(dialogs))
+                report = qm.build_report(dialogs, all_findings)
+            else:
+                report = "No dialogs found in last 24h."
+
+            with open(report_path, "w", encoding="utf-8") as f:
+                f.write(report)
         except Exception as e:
-            # Write error to report file so user sees it
             with open(report_path, "w", encoding="utf-8") as f:
                 f.write(f"Error: {e}")
         finally:
-            # Remove lock
             try:
                 os.remove(lock_path)
             except Exception:
