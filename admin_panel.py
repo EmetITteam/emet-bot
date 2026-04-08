@@ -276,80 +276,159 @@ def index_document(filename: str, text: str, source_label: str = "manual_upload"
 
 BASE_HTML = """
 <!DOCTYPE html>
-<html lang="ru">
+<html lang="uk">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>EMET Admin Panel</title>
+<title>EMET Admin</title>
 <style>
+  :root {
+    --emet-blue: #066aab;
+    --emet-blue-light: #0880cc;
+    --emet-blue-dark: #055a91;
+    --emet-blue-50: #e8f4fc;
+    --emet-blue-100: #c5e3f6;
+    --emet-blue-200: #8ec7ed;
+    --bg: #f4f7fb;
+    --fg: #1c2434;
+    --card: #ffffff;
+    --muted: #eef1f6;
+    --border: #e2e7ef;
+    --accent: #e8f4fc;
+    --red: #d63637;
+    --green: #1a9a5c;
+    --orange: #e67e22;
+    --radius: 14px;
+    --shadow: 0 1px 3px rgba(0,0,0,.04), 0 4px 16px rgba(6,106,171,.06);
+    --shadow-hover: 0 2px 8px rgba(6,106,171,.12);
+  }
   * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-         background: #f0f2f5; color: #1a1a2e; }
-  nav { background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
-        color: #fff; padding: 0 24px; display: flex; align-items: center; gap: 8px; }
-  nav .logo { font-size: 18px; font-weight: 800; padding: 16px 0; margin-right: 24px; }
-  nav a { color: rgba(255,255,255,.75); text-decoration: none; padding: 18px 14px;
-          font-size: 14px; border-bottom: 3px solid transparent; transition: all .2s; }
-  nav a:hover, nav a.active { color: #fff; border-bottom-color: #e94560; }
-  nav .logout { margin-left: auto; font-size: 13px; }
-  .container { max-width: 1280px; margin: 0 auto; padding: 28px 20px; }
-  .kpi-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 24px; }
-  .kpi { background: #fff; border-radius: 12px; padding: 20px 24px;
-         box-shadow: 0 2px 8px rgba(0,0,0,.06); }
-  .kpi .val { font-size: 34px; font-weight: 800; color: #0f3460; }
-  .kpi .lbl { font-size: 13px; color: #666; margin-top: 4px; }
-  .kpi .sub { font-size: 12px; color: #999; margin-top: 2px; }
-  .card { background: #fff; border-radius: 12px; padding: 24px;
-          box-shadow: 0 2px 8px rgba(0,0,0,.06); margin-bottom: 20px; }
-  .card h2 { font-size: 15px; font-weight: 700; color: #333; margin-bottom: 18px;
-             text-transform: uppercase; letter-spacing: .5px; }
+  body { font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+         background: var(--bg); color: var(--fg); font-size: 14px; line-height: 1.5; }
+
+  /* ── Sidebar Navigation ─────────────────────────────────── */
+  .layout { display: flex; min-height: 100vh; }
+  .sidebar { width: 240px; background: linear-gradient(180deg, #055a91 0%, #066aab 40%, #0880cc 100%);
+             color: #fff; padding: 0; flex-shrink: 0; position: fixed; top: 0; left: 0; height: 100vh;
+             display: flex; flex-direction: column; z-index: 100; overflow-y: auto; }
+  .sidebar .logo { padding: 28px 24px 20px; font-size: 20px; font-weight: 800;
+                   letter-spacing: -.5px; border-bottom: 1px solid rgba(255,255,255,.12); }
+  .sidebar .logo span { opacity: .6; font-weight: 400; font-size: 12px; display: block; margin-top: 2px; }
+  .sidebar nav { padding: 12px 0; flex: 1; }
+  .sidebar nav a { display: flex; align-items: center; gap: 10px; padding: 11px 24px;
+                   color: rgba(255,255,255,.7); text-decoration: none; font-size: 13px;
+                   font-weight: 500; transition: all .15s; border-left: 3px solid transparent; }
+  .sidebar nav a:hover { color: #fff; background: rgba(255,255,255,.08); }
+  .sidebar nav a.active { color: #fff; background: rgba(255,255,255,.12);
+                          border-left-color: #fff; font-weight: 600; }
+  .sidebar nav a .icon { width: 20px; text-align: center; font-size: 15px; }
+  .sidebar .logout-wrap { padding: 16px 24px; border-top: 1px solid rgba(255,255,255,.12); }
+  .sidebar .logout-wrap a { display: block; text-align: center; padding: 8px; border-radius: 8px;
+                            color: rgba(255,255,255,.7); text-decoration: none; font-size: 13px;
+                            border: 1px solid rgba(255,255,255,.2); transition: all .15s; }
+  .sidebar .logout-wrap a:hover { background: rgba(255,255,255,.1); color: #fff; }
+
+  /* ── Main Content ───────────────────────────────────────── */
+  .main { margin-left: 240px; flex: 1; padding: 32px 36px; min-height: 100vh; }
+  .page-title { font-size: 22px; font-weight: 700; color: var(--fg); margin-bottom: 24px; }
+
+  /* ── KPI Cards ──────────────────────────────────────────── */
+  .kpi-row { display: grid; grid-template-columns: repeat(4, 1fr); gap: 16px; margin-bottom: 28px; }
+  .kpi { background: var(--card); border-radius: var(--radius); padding: 22px 24px;
+         box-shadow: var(--shadow); border: 1px solid var(--border); transition: box-shadow .2s; }
+  .kpi:hover { box-shadow: var(--shadow-hover); }
+  .kpi .val { font-size: 32px; font-weight: 800; color: var(--emet-blue);
+              background: linear-gradient(135deg, var(--emet-blue-dark), var(--emet-blue-light));
+              -webkit-background-clip: text; -webkit-text-fill-color: transparent; }
+  .kpi .lbl { font-size: 12px; color: #8094ae; margin-top: 4px; text-transform: uppercase;
+              letter-spacing: .5px; font-weight: 600; }
+  .kpi .sub { font-size: 12px; color: #a0aec0; margin-top: 2px; }
+
+  /* ── Cards ──────────────────────────────────────────────── */
+  .card { background: var(--card); border-radius: var(--radius); padding: 24px;
+          box-shadow: var(--shadow); border: 1px solid var(--border); margin-bottom: 20px; }
+  .card h2 { font-size: 14px; font-weight: 700; color: #526484; margin-bottom: 18px;
+             text-transform: uppercase; letter-spacing: .6px; }
   .charts-row { display: grid; grid-template-columns: 2fr 1fr 1fr; gap: 16px; margin-bottom: 20px; }
+
+  /* ── Tables ─────────────────────────────────────────────── */
   table { width: 100%; border-collapse: collapse; font-size: 13px; }
-  th { text-align: left; padding: 9px 12px; background: #f7f8fa;
-       color: #555; font-weight: 600; border-bottom: 2px solid #eee; }
-  td { padding: 9px 12px; border-bottom: 1px solid #f0f0f0; vertical-align: middle; }
-  tr:hover td { background: #fafbff; }
-  .badge { display: inline-block; padding: 2px 9px; border-radius: 20px;
+  th { text-align: left; padding: 10px 14px; background: var(--muted);
+       color: #526484; font-weight: 600; font-size: 12px; text-transform: uppercase;
+       letter-spacing: .4px; border-bottom: 1px solid var(--border); }
+  td { padding: 10px 14px; border-bottom: 1px solid var(--border); vertical-align: middle; }
+  tr:hover td { background: var(--accent); }
+
+  /* ── Badges ─────────────────────────────────────────────── */
+  .badge { display: inline-block; padding: 3px 10px; border-radius: 20px;
            font-size: 11px; font-weight: 600; }
-  .badge-coach    { background: #e8f4fd; color: #1565c0; }
-  .badge-kb       { background: #e8f5e9; color: #2e7d32; }
-  .badge-cases    { background: #fff3e0; color: #e65100; }
-  .badge-operational { background: #f3e5f5; color: #6a1b9a; }
-  .badge-openai   { background: #f3e5f5; color: #6a1b9a; }
-  .badge-google   { background: #fce4ec; color: #c62828; }
-  .badge-manual   { background: #e3f2fd; color: #0d47a1; }
-  .btn { display: inline-block; padding: 9px 20px; border-radius: 8px; cursor: pointer;
-         font-size: 14px; font-weight: 600; border: none; text-decoration: none; transition: all .2s; }
-  .btn-primary { background: #0f3460; color: #fff; }
-  .btn-primary:hover { background: #1a4a8a; }
-  .btn-danger  { background: #e94560; color: #fff; }
-  .btn-success { background: #2e7d32; color: #fff; }
-  .btn-outline { background: transparent; color: #0f3460; border: 2px solid #0f3460; }
-  .btn-outline:hover { background: #0f3460; color: #fff; }
-  .btn-sm { padding: 5px 12px; font-size: 12px; }
+  .badge-coach    { background: var(--emet-blue-50); color: var(--emet-blue); }
+  .badge-kb       { background: #e6f7ee; color: var(--green); }
+  .badge-cases    { background: #fef3e2; color: var(--orange); }
+  .badge-operational { background: #f3e8ff; color: #7c3aed; }
+  .badge-openai   { background: #f3e8ff; color: #7c3aed; }
+  .badge-google   { background: #fce4ec; color: var(--red); }
+  .badge-manual   { background: var(--emet-blue-50); color: var(--emet-blue); }
+
+  /* ── Buttons ────────────────────────────────────────────── */
+  .btn { display: inline-flex; align-items: center; gap: 6px; padding: 10px 22px;
+         border-radius: 10px; cursor: pointer; font-size: 14px; font-weight: 600;
+         border: none; text-decoration: none; transition: all .2s; }
+  .btn-primary { background: linear-gradient(135deg, var(--emet-blue), var(--emet-blue-light));
+                 color: #fff; box-shadow: 0 2px 8px rgba(6,106,171,.25); }
+  .btn-primary:hover { background: linear-gradient(135deg, var(--emet-blue-dark), var(--emet-blue));
+                       box-shadow: 0 4px 16px rgba(6,106,171,.35); transform: translateY(-1px); }
+  .btn-danger  { background: linear-gradient(135deg, #c0392b, var(--red)); color: #fff;
+                 box-shadow: 0 2px 8px rgba(214,54,55,.2); }
+  .btn-danger:hover { box-shadow: 0 4px 12px rgba(214,54,55,.3); transform: translateY(-1px); }
+  .btn-success { background: linear-gradient(135deg, #16a34a, var(--green)); color: #fff;
+                 box-shadow: 0 2px 8px rgba(26,154,92,.2); }
+  .btn-success:hover { box-shadow: 0 4px 12px rgba(26,154,92,.3); transform: translateY(-1px); }
+  .btn-outline { background: transparent; color: var(--emet-blue);
+                 border: 1.5px solid var(--emet-blue); }
+  .btn-outline:hover { background: var(--emet-blue); color: #fff; }
+  .btn-sm { padding: 6px 14px; font-size: 12px; border-radius: 8px; }
+
+  /* ── Forms ──────────────────────────────────────────────── */
   .form-group { margin-bottom: 16px; }
-  .form-group label { display: block; font-size: 13px; font-weight: 600; margin-bottom: 6px; color: #444; }
-  .form-control { width: 100%; padding: 9px 12px; border: 1px solid #ddd; border-radius: 8px;
-                  font-size: 14px; outline: none; }
-  .form-control:focus { border-color: #0f3460; box-shadow: 0 0 0 3px rgba(15,52,96,.1); }
-  .alert { padding: 12px 16px; border-radius: 8px; margin-bottom: 16px; font-size: 14px; }
-  .alert-success { background: #e8f5e9; color: #2e7d32; border-left: 4px solid #2e7d32; }
-  .alert-danger  { background: #fce4ec; color: #c62828; border-left: 4px solid #c62828; }
-  .alert-info    { background: #e3f2fd; color: #0d47a1; border-left: 4px solid #0d47a1; }
-  .upload-zone { border: 2px dashed #ccc; border-radius: 12px; padding: 40px; text-align: center;
-                 cursor: pointer; transition: all .2s; background: #fafafa; }
-  .upload-zone:hover { border-color: #0f3460; background: #f0f4ff; }
+  .form-group label { display: block; font-size: 13px; font-weight: 600; margin-bottom: 6px; color: #526484; }
+  .form-control { width: 100%; padding: 10px 14px; border: 1.5px solid var(--border); border-radius: 10px;
+                  font-size: 14px; outline: none; background: var(--card); transition: all .15s; }
+  .form-control:focus { border-color: var(--emet-blue);
+                        box-shadow: 0 0 0 3px rgba(6,106,171,.1); }
+
+  /* ── Alerts ─────────────────────────────────────────────── */
+  .alert { padding: 14px 18px; border-radius: 10px; margin-bottom: 16px; font-size: 14px; font-weight: 500; }
+  .alert-success { background: #e6f7ee; color: var(--green); border-left: 4px solid var(--green); }
+  .alert-danger  { background: #fef2f2; color: var(--red); border-left: 4px solid var(--red); }
+  .alert-info    { background: var(--emet-blue-50); color: var(--emet-blue); border-left: 4px solid var(--emet-blue); }
+
+  /* ── Upload zone ────────────────────────────────────────── */
+  .upload-zone { border: 2px dashed var(--border); border-radius: var(--radius); padding: 40px;
+                 text-align: center; cursor: pointer; transition: all .2s; background: var(--muted); }
+  .upload-zone:hover { border-color: var(--emet-blue); background: var(--emet-blue-50); }
   .upload-zone input { display: none; }
+
+  /* ── Misc ───────────────────────────────────────────────── */
   .sync-status { display: flex; align-items: center; gap: 12px; padding: 12px 16px;
-                 background: #f7f8fa; border-radius: 8px; margin-bottom: 12px; }
-  .dot-green { width: 10px; height: 10px; border-radius: 50%; background: #2e7d32; }
-  .dot-grey  { width: 10px; height: 10px; border-radius: 50%; background: #999; }
-  .progress-bar-wrap { background: #f0f0f0; border-radius: 10px; height: 8px; margin-top: 4px; }
-  .progress-bar { height: 8px; border-radius: 10px; background: #0f3460; transition: width .3s; }
-  .text-muted { color: #888; font-size: 12px; }
-  .text-green { color: #2e7d32; font-weight: 600; }
-  .text-red   { color: #c62828; font-weight: 600; }
-  @media (max-width: 900px) {
+                 background: var(--muted); border-radius: 10px; margin-bottom: 12px; }
+  .dot-green { width: 10px; height: 10px; border-radius: 50%; background: var(--green); }
+  .dot-grey  { width: 10px; height: 10px; border-radius: 50%; background: #a0aec0; }
+  .progress-bar-wrap { background: var(--muted); border-radius: 10px; height: 8px; margin-top: 4px; }
+  .progress-bar { height: 8px; border-radius: 10px;
+                  background: linear-gradient(90deg, var(--emet-blue), var(--emet-blue-light));
+                  transition: width .3s; }
+  .text-muted { color: #8094ae; font-size: 12px; }
+  .text-green { color: var(--green); font-weight: 600; }
+  .text-red   { color: var(--red); font-weight: 600; }
+
+  @media (max-width: 1100px) {
+    .sidebar { width: 200px; }
+    .main { margin-left: 200px; padding: 24px 20px; }
+  }
+  @media (max-width: 768px) {
+    .sidebar { display: none; }
+    .main { margin-left: 0; }
     .kpi-row { grid-template-columns: repeat(2,1fr); }
     .charts-row { grid-template-columns: 1fr; }
   }
@@ -357,24 +436,30 @@ BASE_HTML = """
 <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.0/dist/chart.umd.min.js"></script>
 </head>
 <body>
-<nav>
-  <div class="logo">🤖 EMET Admin</div>
-  <a href="/" class="{{ 'active' if active=='dashboard' }}">📊 Дашборд</a>
-  <a href="/knowledge" class="{{ 'active' if active=='knowledge' }}">📚 База знаний</a>
-  <a href="/users" class="{{ 'active' if active=='users' }}">👥 Пользователи</a>
-  <a href="/learning" class="{{ 'active' if active=='learning' }}">🎓 Навчання</a>
-  <a href="/access" class="{{ 'active' if active=='access' }}">🔑 Доступи</a>
-  <a href="/quality" class="{{ 'active' if active=='quality' }}">🔍 Якість</a>
-  <a href="/digest" class="{{ 'active' if active=='digest' }}">📨 Дайджест</a>
-  <a href="/logout" class="logout btn btn-sm btn-outline" style="margin:auto 0 auto auto;color:#fff;border-color:rgba(255,255,255,.4)">Выйти</a>
-</nav>
-<div class="container">
-  {% with messages = get_flashed_messages(with_categories=true) %}
-    {% for cat, msg in messages %}
-      <div class="alert alert-{{ cat }}">{{ msg }}</div>
-    {% endfor %}
-  {% endwith %}
-  {{ content | safe }}
+<div class="layout">
+  <aside class="sidebar">
+    <div class="logo">EMET<span>Admin Panel</span></div>
+    <nav>
+      <a href="/" class="{{ 'active' if active=='dashboard' }}"><span class="icon">📊</span> Дашборд</a>
+      <a href="/knowledge" class="{{ 'active' if active=='knowledge' }}"><span class="icon">📚</span> База знань</a>
+      <a href="/users" class="{{ 'active' if active=='users' }}"><span class="icon">👥</span> Користувачі</a>
+      <a href="/learning" class="{{ 'active' if active=='learning' }}"><span class="icon">🎓</span> Навчання</a>
+      <a href="/access" class="{{ 'active' if active=='access' }}"><span class="icon">🔑</span> Доступи</a>
+      <a href="/quality" class="{{ 'active' if active=='quality' }}"><span class="icon">🔍</span> Якість</a>
+      <a href="/digest" class="{{ 'active' if active=='digest' }}"><span class="icon">📨</span> Дайджест</a>
+    </nav>
+    <div class="logout-wrap">
+      <a href="/logout">Вийти</a>
+    </div>
+  </aside>
+  <div class="main">
+    {% with messages = get_flashed_messages(with_categories=true) %}
+      {% for cat, msg in messages %}
+        <div class="alert alert-{{ cat }}">{{ msg }}</div>
+      {% endfor %}
+    {% endwith %}
+    {{ content | safe }}
+  </div>
 </div>
 </body>
 </html>
@@ -382,37 +467,42 @@ BASE_HTML = """
 
 LOGIN_HTML = """
 <!DOCTYPE html>
-<html lang="ru">
+<html lang="uk">
 <head>
 <meta charset="UTF-8">
-<title>EMET Admin — Вход</title>
+<title>EMET Admin</title>
 <style>
   * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: -apple-system, sans-serif; background: #f0f2f5;
+  body { font-family: 'Inter', -apple-system, sans-serif;
+         background: linear-gradient(135deg, #055a91 0%, #066aab 50%, #0880cc 100%);
          display: flex; align-items: center; justify-content: center; min-height: 100vh; }
-  .box { background: #fff; border-radius: 16px; padding: 48px 40px;
-         box-shadow: 0 8px 32px rgba(0,0,0,.12); width: 100%; max-width: 400px; }
-  h1 { font-size: 24px; font-weight: 800; color: #1a1a2e; margin-bottom: 8px; }
-  p { color: #666; font-size: 14px; margin-bottom: 28px; }
-  label { display: block; font-size: 13px; font-weight: 600; margin-bottom: 6px; color: #444; }
-  input { width: 100%; padding: 11px 14px; border: 1px solid #ddd; border-radius: 8px;
-          font-size: 15px; margin-bottom: 20px; outline: none; }
-  input:focus { border-color: #0f3460; box-shadow: 0 0 0 3px rgba(15,52,96,.1); }
-  button { width: 100%; padding: 12px; background: #0f3460; color: #fff; border: none;
-           border-radius: 8px; font-size: 15px; font-weight: 700; cursor: pointer; }
-  button:hover { background: #1a4a8a; }
-  .err { color: #c62828; font-size: 13px; margin-bottom: 16px; }
+  .box { background: #fff; border-radius: 20px; padding: 48px 40px;
+         box-shadow: 0 20px 60px rgba(0,0,0,.2); width: 100%; max-width: 400px; }
+  h1 { font-size: 28px; font-weight: 800; color: #066aab; margin-bottom: 6px; letter-spacing: -.5px; }
+  .subtitle { color: #8094ae; font-size: 14px; margin-bottom: 32px; }
+  label { display: block; font-size: 13px; font-weight: 600; margin-bottom: 6px; color: #526484; }
+  input { width: 100%; padding: 12px 16px; border: 1.5px solid #e2e7ef; border-radius: 10px;
+          font-size: 15px; margin-bottom: 24px; outline: none; transition: all .15s; }
+  input:focus { border-color: #066aab; box-shadow: 0 0 0 3px rgba(6,106,171,.12); }
+  button { width: 100%; padding: 14px; border: none; border-radius: 10px;
+           font-size: 15px; font-weight: 700; cursor: pointer; color: #fff;
+           background: linear-gradient(135deg, #066aab, #0880cc);
+           box-shadow: 0 4px 16px rgba(6,106,171,.3); transition: all .2s; }
+  button:hover { background: linear-gradient(135deg, #055a91, #066aab);
+                 box-shadow: 0 6px 24px rgba(6,106,171,.4); transform: translateY(-1px); }
+  .err { color: #d63637; font-size: 13px; margin-bottom: 16px; padding: 10px 14px;
+         background: #fef2f2; border-radius: 8px; }
 </style>
 </head>
 <body>
 <div class="box">
-  <h1>🤖 EMET Admin</h1>
-  <p>Введите пароль администратора</p>
+  <h1>EMET</h1>
+  <p class="subtitle">Адмін-панель</p>
   {% if error %}<div class="err">{{ error }}</div>{% endif %}
   <form method="post">
     <label>Пароль</label>
-    <input type="password" name="password" autofocus placeholder="••••••••">
-    <button type="submit">Войти</button>
+    <input type="password" name="password" autofocus placeholder="Введіть пароль">
+    <button type="submit">Увійти</button>
   </form>
 </div>
 </body>
