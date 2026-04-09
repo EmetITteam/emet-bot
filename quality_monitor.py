@@ -315,6 +315,33 @@ def run_monitor():
     return report, all_findings
 
 
+def run_monitor_safe():
+    """Same as run_monitor but without print() — safe for async tasks and background threads."""
+    dialogs = get_dialogs(HOURS_BACK)
+    if not dialogs:
+        return None, []
+
+    all_findings = []
+    for d in dialogs:
+        all_findings.extend(analyze_dialog(d))
+    all_findings.extend(detect_contradictions(dialogs))
+
+    try:
+        from tests.test_knowledge_integrity import run_integrity_check
+        integrity_ok, integrity_report = run_integrity_check(verbose=False)
+        if not integrity_ok:
+            all_findings.append({
+                "type": "knowledge_loss", "severity": "P0",
+                "description": "Knowledge integrity check FAILED",
+                "dialog_id": "system", "match": integrity_report[:200],
+            })
+    except Exception:
+        pass
+
+    report = build_report(dialogs, all_findings)
+    return report, all_findings
+
+
 if __name__ == "__main__":
     report, findings = run_monitor()
     if report:

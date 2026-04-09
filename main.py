@@ -3189,18 +3189,22 @@ async def weekly_digest_task():
 
 
 async def daily_quality_task():
-    """Щодня о 08:00 відправляє звіт якості ТІЛЬКИ адміну."""
-    from datetime import timedelta
+    """Щодня о 08:00 Kyiv time відправляє звіт якості ТІЛЬКИ адміну."""
+    from datetime import timedelta, timezone
+    import zoneinfo
+    tz_kyiv = zoneinfo.ZoneInfo("Europe/Kiev")
     while True:
-        now = datetime.now()
+        now = datetime.now(tz_kyiv)
         tomorrow_8am = now.replace(hour=8, minute=0, second=0, microsecond=0)
         if now.hour >= 8:
             tomorrow_8am += timedelta(days=1)
-        await asyncio.sleep(max((tomorrow_8am - now).total_seconds(), 60))
+        wait_secs = (tomorrow_8am - now).total_seconds()
+        logger.info("Quality task: next run at %s (in %.0f min)", tomorrow_8am.strftime("%H:%M"), wait_secs / 60)
+        await asyncio.sleep(max(wait_secs, 60))
 
         try:
-            from quality_monitor import run_monitor
-            report, findings = run_monitor()
+            from quality_monitor import run_monitor_safe
+            report, findings = run_monitor_safe()
             if report and ADMIN_ID:
                 # Split if too long for Telegram
                 if len(report) > 4000:
