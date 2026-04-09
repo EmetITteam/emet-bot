@@ -1643,6 +1643,8 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
     # Убираем метки REF перед отправкой
     answer = re.sub(r'\[?REF\d+\]?', '', answer).strip()
     answer = answer.replace("  ", " ")
+    # Fix **bold** → *bold* (Telegram doesn't render double asterisks)
+    answer = re.sub(r'\*\*(.+?)\*\*', r'*\1*', answer)
 
     if used_links:
         final_links = list(set(used_links))
