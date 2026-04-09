@@ -3201,12 +3201,22 @@ async def daily_quality_task():
             tz_kyiv = timezone(timedelta(hours=3))  # UTC+3 fallback
     while True:
         now = datetime.now(tz_kyiv)
-        tomorrow_8am = now.replace(hour=8, minute=0, second=0, microsecond=0)
+        target = now.replace(hour=8, minute=0, second=0, microsecond=0)
         if now.hour >= 8:
-            tomorrow_8am += timedelta(days=1)
-        wait_secs = (tomorrow_8am - now).total_seconds()
-        logger.info("Quality task: next run at %s (in %.0f min)", tomorrow_8am.strftime("%H:%M"), wait_secs / 60)
-        await asyncio.sleep(max(wait_secs, 60))
+            # Already past 8AM today — check if we missed today's report
+            marker = "data/.quality_sent_" + now.strftime("%Y%m%d")
+            if not os.path.exists(marker):
+                # Send now (missed today's report due to restart)
+                logger.info("Quality task: missed today's 08:00, sending now")
+                wait_secs = 5
+            else:
+                target += timedelta(days=1)
+                wait_secs = (target - now).total_seconds()
+        else:
+            wait_secs = (target - now).total_seconds()
+        if wait_secs > 10:
+            logger.info("Quality task: next run at %s (in %.0f min)", target.strftime("%H:%M"), wait_secs / 60)
+        await asyncio.sleep(max(wait_secs, 5))
 
         try:
             from quality_monitor import run_monitor_safe
@@ -3220,6 +3230,10 @@ async def daily_quality_task():
                 for part in parts:
                     await bot.send_message(ADMIN_ID, part, parse_mode="Markdown")
                 logger.info("Quality report sent to admin: %d findings", len(findings) if findings else 0)
+                # Mark today as sent
+                marker = "data/.quality_sent_" + datetime.now(tz_kyiv).strftime("%Y%m%d")
+                with open(marker, "w") as mf:
+                    mf.write("sent")
         except Exception as e:
             logger.error("Quality monitor error: %s", e)
 
