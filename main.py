@@ -3192,7 +3192,13 @@ async def daily_quality_task():
     """Щодня о 08:00 Kyiv time відправляє звіт якості ТІЛЬКИ адміну."""
     from datetime import timedelta, timezone
     import zoneinfo
-    tz_kyiv = zoneinfo.ZoneInfo("Europe/Kiev")
+    try:
+        tz_kyiv = zoneinfo.ZoneInfo("Europe/Kyiv")
+    except Exception:
+        try:
+            tz_kyiv = zoneinfo.ZoneInfo("Europe/Kiev")
+        except Exception:
+            tz_kyiv = timezone(timedelta(hours=3))  # UTC+3 fallback
     while True:
         now = datetime.now(tz_kyiv)
         tomorrow_8am = now.replace(hour=8, minute=0, second=0, microsecond=0)
