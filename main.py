@@ -1717,15 +1717,32 @@ async def send_question(message: types.Message, questions: list, index: int):
     options = list(q["options"])
     random.shuffle(options)
 
-    builder = InlineKeyboardBuilder()
-    for opt in options:
-        builder.button(
-            text=opt["text"],
-            callback_data=f"lms_answer_{opt['id']}_{int(opt['is_correct'])}"
-        )
-    builder.adjust(1)
+    # Check if any option is too long for inline button (Telegram limit ~64 chars visible)
+    max_btn_len = 50
+    long_options = any(len(opt["text"]) > max_btn_len for opt in options)
 
-    question_text = f"*Питання {index + 1}/{total}*\n\n{q['text']}"
+    builder = InlineKeyboardBuilder()
+    if long_options:
+        # Long options: show numbered list in text, buttons = just numbers
+        option_lines = []
+        for i, opt in enumerate(options, 1):
+            option_lines.append(f"{i}. {opt['text']}")
+            builder.button(
+                text=f"Варіант {i}",
+                callback_data=f"lms_answer_{opt['id']}_{int(opt['is_correct'])}"
+            )
+        options_text = "\n".join(option_lines)
+        question_text = f"*Питання {index + 1}/{total}*\n\n{q['text']}\n\n{options_text}"
+    else:
+        # Short options: show directly on buttons
+        for opt in options:
+            builder.button(
+                text=opt["text"],
+                callback_data=f"lms_answer_{opt['id']}_{int(opt['is_correct'])}"
+            )
+        question_text = f"*Питання {index + 1}/{total}*\n\n{q['text']}"
+
+    builder.adjust(1)
     try:
         await message.answer(question_text, parse_mode="Markdown", reply_markup=builder.as_markup())
     except Exception:
