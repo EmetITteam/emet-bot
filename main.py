@@ -2542,25 +2542,26 @@ async def show_topics(callback: types.CallbackQuery, state: FSMContext):
     builder = InlineKeyboardBuilder()
     for t_id, order_num, title, is_cert, max_att in topics:
         progress = progress_map.get(t_id)
-        # Trim long titles for Telegram button limit
-        short_title = title[:35] + "…" if len(title) > 38 else title
-        icon = "🏆" if is_cert else "⬜"
+        # Status: compact icon at start, no number (saves space for title)
         if progress and progress[0]:
             icon = "✅"
-            label = f"{icon} {order_num}. {short_title} ({progress[1]}%)"
         elif progress and is_cert and max_att and progress[2] >= max_att:
-            label = f"🔒 {order_num}. {short_title} — вичерпано"
+            icon = "🔒"
         elif progress:
-            label = f"🔄 {order_num}. {short_title} (розпочато)"
+            icon = "🔄"
         else:
-            label = f"{icon} {order_num}. {short_title}"
+            icon = "📖" if not is_cert else "🏆"
+        # Max button text ~45 chars visible on mobile
+        max_title = 42
+        short = title if len(title) <= max_title else title[:max_title] + "…"
+        label = f"{icon} {short}"
         builder.button(text=label, callback_data=f"lms_topic_{t_id}")
 
     builder.button(text="⬅️ До курсів", callback_data="set_learn")
     builder.adjust(1)
 
     await callback.message.answer(
-        "*Теми курсу:*\n\n✅ — пройдено  🔄 — розпочато  ⬜ — не розпочато",
+        "*Оберіть тему:*",
         parse_mode="Markdown",
         reply_markup=builder.as_markup()
     )
