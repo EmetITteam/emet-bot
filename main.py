@@ -1723,15 +1723,17 @@ async def send_question(message: types.Message, questions: list, index: int):
 
     builder = InlineKeyboardBuilder()
     if long_options:
-        # Long options: show numbered list in text, buttons = just numbers
+        # Long options: show lettered list in text (A/B/C/D), buttons = letters
+        letters = "ABCDEFGH"
         option_lines = []
-        for i, opt in enumerate(options, 1):
-            option_lines.append(f"{i}. {opt['text']}")
+        for i, opt in enumerate(options):
+            letter = letters[i] if i < len(letters) else str(i + 1)
+            option_lines.append(f"{letter}) {opt['text']}")
             builder.button(
-                text=f"Варіант {i}",
+                text=f"{letter}",
                 callback_data=f"lms_answer_{opt['id']}_{int(opt['is_correct'])}"
             )
-        options_text = "\n".join(option_lines)
+        options_text = "\n\n".join(option_lines)
         question_text = f"*Питання {index + 1}/{total}*\n\n{q['text']}\n\n{options_text}"
     else:
         # Short options: show directly on buttons
@@ -2540,16 +2542,18 @@ async def show_topics(callback: types.CallbackQuery, state: FSMContext):
     builder = InlineKeyboardBuilder()
     for t_id, order_num, title, is_cert, max_att in topics:
         progress = progress_map.get(t_id)
+        # Trim long titles for Telegram button limit
+        short_title = title[:35] + "…" if len(title) > 38 else title
         icon = "🏆" if is_cert else "⬜"
         if progress and progress[0]:
             icon = "✅"
-            label = f"{icon} {order_num}. {title} ({progress[1]}%)"
+            label = f"{icon} {order_num}. {short_title} ({progress[1]}%)"
         elif progress and is_cert and max_att and progress[2] >= max_att:
-            label = f"🔒 {order_num}. {title} — вичерпано спроби"
+            label = f"🔒 {order_num}. {short_title} — вичерпано"
         elif progress:
-            label = f"🔄 {order_num}. {title} (розпочато)"
+            label = f"🔄 {order_num}. {short_title} (розпочато)"
         else:
-            label = f"{icon} {order_num}. {title}"
+            label = f"{icon} {order_num}. {short_title}"
         builder.button(text=label, callback_data=f"lms_topic_{t_id}")
 
     builder.button(text="⬅️ До курсів", callback_data="set_learn")
@@ -3240,8 +3244,9 @@ async def daily_quality_task():
         try:
             from quality_monitor import run_monitor_safe
             report, findings = run_monitor_safe()
+            # Always mark as sent (even if no dialogs) to prevent infinite loop
+            marker = "data/.quality_sent_" + datetime.now(tz_kyiv).strftime("%Y%m%d")
             if report and ADMIN_ID:
-                # Split if too long for Telegram
                 if len(report) > 4000:
                     parts = [report[i:i+4000] for i in range(0, len(report), 4000)]
                 else:
@@ -3249,12 +3254,20 @@ async def daily_quality_task():
                 for part in parts:
                     await bot.send_message(ADMIN_ID, part, parse_mode="Markdown")
                 logger.info("Quality report sent to admin: %d findings", len(findings) if findings else 0)
-                # Mark today as sent
-                marker = "data/.quality_sent_" + datetime.now(tz_kyiv).strftime("%Y%m%d")
-                with open(marker, "w") as mf:
-                    mf.write("sent")
+            elif ADMIN_ID:
+                await bot.send_message(ADMIN_ID, "Quality Monitor: за останні 24 год діалогів не знайдено.")
+                logger.info("Quality report: no dialogs found")
+            with open(marker, "w") as mf:
+                mf.write("sent")
         except Exception as e:
             logger.error("Quality monitor error: %s", e)
+            # Still mark to prevent loop
+            try:
+                marker = "data/.quality_sent_" + datetime.now(tz_kyiv).strftime("%Y%m%d")
+                with open(marker, "w") as mf:
+                    mf.write(f"error: {e}")
+            except Exception:
+                pass
 
 
 async def auto_sync_task():
