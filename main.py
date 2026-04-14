@@ -164,7 +164,9 @@ RAG_K_COMBO            = 15    # chunks for combo with category filter
 LLM_TIMEOUT            = 60    # seconds timeout for all LLM API calls
 LLM_INTENT_MAX_TOKENS  = 10    # detect_intent classifier output
 LLM_QUERY_MAX_TOKENS   = 60    # prepare_search_query output
+LLM_OPENAI_MAX_TOKENS  = 4096  # OpenAI main response
 LLM_CLAUDE_MAX_TOKENS  = 4096  # Claude fallback response
+LLM_TEMPERATURE        = 0.3   # основна температура для coach/kb відповідей
 STREAM_UPDATE_INTERVAL = 0.8   # seconds between streaming message edits
 CHAT_HISTORY_COACH     = 6     # max messages in coach history (3 exchanges)
 CHAT_HISTORY_DEFAULT   = 4     # max messages for other modes (2 exchanges)
@@ -1039,21 +1041,6 @@ async def extract_coaching_facts(context: str, user_query: str) -> str:
         return ""
 
 
-def _select_coach_prompt(has_objection, is_script, is_type_b, is_type_c, is_visit=False):
-    """Select the right sub-prompt for coaching mode."""
-    base = PROMPT_COACH_BASE
-    if is_type_c:
-        return base + "\n\n" + PROMPT_COACH_FEEDBACK
-    if is_type_b:
-        return base + "\n\n" + PROMPT_COACH_EVALUATE
-    if is_visit:
-        return base + "\n\n" + PROMPT_COACH_VISIT
-    if has_objection:
-        return base + "\n\n" + PROMPT_COACH_SOS
-    if is_script:
-        return base + "\n\n" + PROMPT_COACH_SCRIPT
-    return base + "\n\n" + PROMPT_COACH_INFO
-
 
 async def detect_intent(query: str) -> str:
     try:
@@ -1708,6 +1695,8 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
             stream = await client_openai.chat.completions.create(
                 model=_model,
                 timeout=LLM_TIMEOUT,
+                temperature=LLM_TEMPERATURE,
+                max_tokens=LLM_OPENAI_MAX_TOKENS,
                 messages=[
                     {"role": "system", "content": _system_prompt},
                     *chat_history,

@@ -27,9 +27,9 @@ try:
 except Exception as e:
     print(f"ERROR loading ChromaDB: {e}"); sys.exit(1)
 
-# --- Промпт коуча (спрощена версія з prompts.py) ---
-from prompts import SYSTEM_PROMPTS
-COACH_SYSTEM = SYSTEM_PROMPTS["coach"]
+# --- Промпт коуча (модульна система v2) ---
+from prompts_v2 import PROMPT_COACH_BASE, PROMPT_COACH_SOS
+COACH_SYSTEM = PROMPT_COACH_BASE + "\n\n" + PROMPT_COACH_SOS
 
 # --- Тестовий сценарій: 3 послідовних питання від одного менеджера ---
 TEST_QUESTIONS = [
