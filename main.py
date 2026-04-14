@@ -1681,15 +1681,19 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
             "не вірно", "не верно", "переплутав", "перепутал",
         ]
         _is_type_c = any(kw in t_lower for kw in _TYPE_C_KEYWORDS)
-        # Паттерн виправлення: "N одиниця - не M" де N,M — числа
-        # Правильно: "6 міс - не 3 міс", "18 місяців, а не 12"
-        # Неправильно (НЕ матчити): "Petaran - не бачу результату"
+        # Паттерн виправлення: числові виправлення
+        # Правильно: "6 міс - не 3 міс" / "не 20 мг, а 10" / "не 12, а 18"
+        # Неправильно: "Petaran - не бачу результату"
         import re as _re
-        _CORRECTION_NUM_PATTERN = (
-            r'\b\d+\s*(міс|мес|мес\.|год|дн|%|мг|мл|мкм|\bл\b|шт)'
-            r'\S*\s*[-,]\s*(а\s+)?не\s+\d+'
-        )
-        if not _is_type_c and _re.search(_CORRECTION_NUM_PATTERN, t_lower):
+        _CORRECTION_PATTERNS = [
+            # "X (одиниця) - не Y" — старий патерн
+            r'\b\d+\s*(міс|мес|мес\.|год|дн|%|мг|мл|мкм|\bл\b|шт)\S*\s*[-,]\s*(а\s+)?не\s+\d+',
+            # "не X, а Y" або "не X а Y" — числові виправлення з "а"
+            r'\bне\s+\d+\S*\s*,?\s*а\s+\d+',
+            # "не X (одиниця)" коли є інше число поряд (rare correction)
+            r'\bне\s+\d+\s*(міс|мес|мг|мл|%|мкм|год|дн|шт)',
+        ]
+        if not _is_type_c and any(_re.search(p, t_lower) for p in _CORRECTION_PATTERNS):
             _is_type_c = True
 
         # Тип B: менеджер дав свою відповідь для оцінки
