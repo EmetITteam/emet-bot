@@ -859,43 +859,108 @@ RAG_SCORE_THRESHOLD    = 1.5    # permissive threshold — log scores for tuning
 
 # Product name normalization for RAG search queries
 _QUERY_NORMALIZE = {
-    # Vitaran Tox Eye — all transliterations
+    # ═══ HP Cell Vitaran Tox Eye ═══
     "токс ай": "HP Cell Vitaran Tox Eye Face Collagen склад",
     "тохтай": "HP Cell Vitaran Tox Eye Face Collagen склад",
     "тох тай": "HP Cell Vitaran Tox Eye Face Collagen склад",
+    "токсай": "HP Cell Vitaran Tox Eye Face Collagen склад",
+    "tox eye": "HP Cell Vitaran Tox Eye Face Collagen",
     "витаран токс": "HP Cell Vitaran Tox Eye Face Collagen",
+    "вітаран токс": "HP Cell Vitaran Tox Eye Face Collagen",
     "витаран ай": "HP Cell Vitaran Tox Eye Face Collagen",
     "вітаран ай": "HP Cell Vitaran Tox Eye Face Collagen",
-    "tox eye": "HP Cell Vitaran Tox Eye Face Collagen",
-    # Vitaran Whitening — all transliterations
-    "вайтнінг": "HP Cell Vitaran Whitening Anti-Aging глутатіон склад",
-    "вайтинг": "HP Cell Vitaran Whitening Anti-Aging глутатіон склад",
-    "вайтенинг": "HP Cell Vitaran Whitening Anti-Aging глутатіон склад",
+    "витаран тох": "HP Cell Vitaran Tox Eye Face Collagen",
+
+    # ═══ HP Cell Vitaran Whitening ═══
+    "вайтнінг": "HP Cell Vitaran Whitening Anti-Aging глутатіон",
+    "вайтинг": "HP Cell Vitaran Whitening Anti-Aging глутатіон",
+    "вайтенинг": "HP Cell Vitaran Whitening Anti-Aging глутатіон",
+    "вайтнинг": "HP Cell Vitaran Whitening Anti-Aging глутатіон",
     "whitening": "HP Cell Vitaran Whitening Anti-Aging",
-    # IUSE
-    "скінбустер": "IUSE SKINBOOSTER HA 20", "скін бустер": "IUSE SKINBOOSTER HA 20",
-    "скін хілер": "Vitaran Skin Healer",
-    # ESSE — all variants
-    "ессе": "ESSE Esse Skincare космецевтика пробіотики",
-    "эссе": "ESSE Esse Skincare космецевтика пробіотики",
-    "esse": "ESSE Esse Skincare космецевтика пробіотики",
-    # Ellanse
+    "уайтенинг": "HP Cell Vitaran Whitening Anti-Aging",
+    "витаран вайт": "HP Cell Vitaran Whitening Anti-Aging",
+
+    # ═══ HP Cell Vitaran (base) ═══
+    "хп сел": "HP Cell Vitaran PDRN", "hp сел": "HP Cell Vitaran PDRN",
+    "hp cell": "HP Cell Vitaran PDRN", "хп селл": "HP Cell Vitaran PDRN",
+    "нр cell": "HP Cell Vitaran PDRN",  # eng keyboard mistype
+    "витаран": "Vitaran HP Cell PDRN", "вітаран": "Vitaran HP Cell PDRN",
+    "vitaran": "Vitaran HP Cell PDRN",
+
+    # ═══ ESSE ═══
+    "ессе": "ESSE Esse Skincare космецевтика пробіотики Африка",
+    "эссе": "ESSE Esse Skincare космецевтика пробіотики Африка",
+    "эсс": "ESSE Esse Skincare космецевтика пробіотики Африка",
+    "есс": "ESSE Esse Skincare космецевтика пробіотики Африка",
+    "esse": "ESSE Esse Skincare космецевтика пробіотики Африка",
+    "ессэ": "ESSE Esse Skincare космецевтика пробіотики",
+    "tcc": "ESSE Esse Skincare",  # eng keyboard "ессе"
+    "tcct": "ESSE Esse Skincare",  # eng keyboard "эссе"
+
+    # ═══ Ellanse ═══
     "елансе": "Ellanse Ellansé PCL філер", "еланс": "Ellanse Ellansé PCL",
     "элансе": "Ellanse Ellansé PCL", "эллансе": "Ellanse Ellansé PCL",
-    # Others
-    "нейраміс": "Neuramis філер", "нейрамис": "Neuramis філер",
-    "нейронокс": "Neuronox ботулотоксин", "петаран": "Petaran PLLA біостимулятор",
-    "ексоксе": "Exoxe EXOXE екзосоми", "экзокс": "Exoxe EXOXE екзосоми",
-    "хп сел": "HP Cell Vitaran PDRN", "hp сел": "HP Cell Vitaran PDRN",
-    "hp cell": "HP Cell Vitaran PDRN",
-    "айюз хеір": "IUSE HAIR REGROWTH волосся", "iuse хеір": "IUSE HAIR REGROWTH",
-    "iuse hair": "IUSE HAIR REGROWTH волосся",
+    "елланс": "Ellanse Ellansé PCL", "ellanse": "Ellanse Ellansé PCL",
+    "елансє": "Ellanse Ellansé PCL",
+    "tkfyct": "Ellanse Ellansé PCL",  # eng keyboard "елансе"
+
+    # ═══ Neuramis ═══
+    "нейраміс": "Neuramis філер ГК", "нейрамис": "Neuramis філер ГК",
+    "neuramis": "Neuramis філер ГК", "нейрамiс": "Neuramis філер ГК",
+    "ytqhfvbc": "Neuramis філер",  # eng keyboard "нейрамис"
+
+    # ═══ Neuronox ═══
+    "нейронокс": "Neuronox ботулотоксин Medytox",
+    "neuronox": "Neuronox ботулотоксин Medytox",
+    "нейроноск": "Neuronox ботулотоксин",  # common typo
+    "ytqhjyjrc": "Neuronox ботулотоксин",  # eng keyboard
+
+    # ═══ Petaran ═══
+    "петаран": "Petaran PLLA біостимулятор колагену",
+    "petaran": "Petaran PLLA біостимулятор",
+    "gtnfhfy": "Petaran PLLA",  # eng keyboard "петаран"
+
+    # ═══ EXOXE ═══
+    "ексоксе": "Exoxe EXOXE екзосоми амніотичні",
+    "экзокс": "Exoxe EXOXE екзосоми", "экзоксе": "Exoxe EXOXE екзосоми",
+    "exoxe": "Exoxe EXOXE екзосоми", "ехохе": "Exoxe EXOXE екзосоми",
+    "ексокс": "Exoxe EXOXE екзосоми",
+
+    # ═══ IUSE SKINBOOSTER ═══
+    "скінбустер": "IUSE SKINBOOSTER HA 20 гіалуронова",
+    "скін бустер": "IUSE SKINBOOSTER HA 20", "скинбустер": "IUSE SKINBOOSTER HA 20",
+    "skinbooster": "IUSE SKINBOOSTER HA 20", "skin booster": "IUSE SKINBOOSTER HA 20",
+    "iuse skin": "IUSE SKINBOOSTER HA 20",
+
+    # ═══ IUSE HAIR ═══
+    "айюз хеір": "IUSE HAIR REGROWTH волосся алопеція",
+    "iuse хеір": "IUSE HAIR REGROWTH", "iuse hair": "IUSE HAIR REGROWTH волосся",
+    "айюз хеир": "IUSE HAIR REGROWTH волосся",
+
+    # ═══ IUSE Collagen ═══
+    "айюз колаген": "IUSE Collagen Marine Beauty",
+    "iuse collagen": "IUSE Collagen Marine Beauty",
+    "iuse колаген": "IUSE Collagen Marine Beauty",
+    "колаген марін": "IUSE Collagen Marine Beauty",
+
+    # ═══ Vitaran Skin Healer ═══
+    "скін хілер": "Vitaran Skin Healer космецевтика",
+    "skin healer": "Vitaran Skin Healer", "скин хилер": "Vitaran Skin Healer",
+
+    # ═══ Magnox ═══
+    "магнокс": "Magnox 520 магній", "magnox": "Magnox 520 магній",
+
+    # ═══ Терміни ═══
     "лізат": "лізати Esse пробіотики лактобактерії",
     "пребіотик": "пребіотики Esse олігосахариди",
-    # Common query words that need product context
-    "состав": "склад компоненти концентрація мг",
+
+    # ═══ Контекстні слова ═══
+    "состав": "склад компоненти концентрація мг мл",
     "производитель": "виробник країна дистриб'ютор",
     "страна": "країна виробник ПАР Корея",
+    "хранени": "зберігання температура умови",
+    "хранить": "зберігання температура умови",
+    "зберіган": "зберігання температура умови",
 }
 
 def _normalize_query(query: str) -> str:
