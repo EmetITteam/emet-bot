@@ -1562,6 +1562,23 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
         ))
     )
 
+    # Заперечення БЕЗ продукту і БЕЗ історії → просимо уточнити, щоб бот не вигадував випадковий продукт з RAG
+    _early_type_b = any(kw in t_lower for kw in [
+        "я відповіла", "я сказала", "менеджер відповів", "менеджер сказав", "оціни"
+    ])
+    _early_type_c = any(kw in t_lower for kw in [
+        "ти помилився", "неправильно", "маєте рацію", "виправлення"
+    ])
+    if (mode_key == "coach" and _has_objection and not _detected_product
+            and not chat_history and not _early_type_b and not _early_type_c):
+        await message.answer(
+            "📝 Про який продукт йде мова?\n\n"
+            "Напиши заперечення разом з назвою препарату — і я дам конкретну SOS-відповідь з цифрами, killer phrase і next step.\n\n"
+            "_Приклад:_ «Ellanse дорого», «лікар не хоче купувати Neuramis», «Vitaran сильно пече»",
+            parse_mode="Markdown"
+        )
+        return
+
     if mode_key == "coach" and _detected_product and _has_objection and not _is_script_request and not _is_coach_followup:
         # Заперечення + продукт → SOS-формат (тільки якщо НЕ запит на скрипт/діалог)
         llm_user_text = (
