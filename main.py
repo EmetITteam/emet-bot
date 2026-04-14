@@ -1619,7 +1619,15 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
             "моя відповідь", "мой ответ", "як я відповіла", "как я ответила",
             "я написала", "я написав", "подивись мою відповідь", "посмотри мой ответ",
         ]
-        _is_type_b = any(kw in t_lower for kw in _TYPE_B_KEYWORDS)
+        _has_type_b_kw = any(kw in t_lower for kw in _TYPE_B_KEYWORDS)
+        # "я відповіла + що робити/як далі" = SOS з контекстом, не evaluate
+        _TYPE_B_OVERRIDE_TO_SOS = [
+            "що робити", "что делать", "як далі", "что дальше",
+            "як відповісти", "что ответить", "як реагувати", "как реагировать",
+            "що сказати", "что сказать", "як бути", "как быть",
+            "не погодився", "не согласился", "відмовив", "отказал",
+        ]
+        _is_type_b = _has_type_b_kw and not any(kw in t_lower for kw in _TYPE_B_OVERRIDE_TO_SOS)
 
         # Тип E: підготовка до візиту
         _VISIT_KEYWORDS = [
@@ -1631,10 +1639,36 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
         ]
         _is_visit = any(kw in t_lower for kw in _VISIT_KEYWORDS)
 
-        _system_prompt = _select_coach_prompt(
-            _has_objection or bool(_detected_competitor), _is_script_request,
-            _is_type_b, _is_type_c, _is_visit
-        )
+        # Визначаємо coach sub-type для збереження в state (follow-up routing)
+        if _is_type_c:
+            _coach_subtype = "feedback"
+        elif _is_type_b:
+            _coach_subtype = "evaluate"
+        elif _is_visit:
+            _coach_subtype = "visit"
+        elif _has_objection or bool(_detected_competitor):
+            _coach_subtype = "sos"
+        elif _is_script_request:
+            _coach_subtype = "script"
+        elif _is_coach_followup and not _has_objection and not _is_script_request:
+            # Follow-up без явного типу — продовжуємо в тому самому форматі
+            _coach_subtype = state_data.get("last_coach_type", "info")
+        else:
+            _coach_subtype = "info"
+
+        # Вибір промпту по subtype (підтримує follow-up через last_coach_type)
+        _COACH_PROMPT_MAP = {
+            "feedback": PROMPT_COACH_FEEDBACK,
+            "evaluate": PROMPT_COACH_EVALUATE,
+            "visit": PROMPT_COACH_VISIT,
+            "sos": PROMPT_COACH_SOS,
+            "script": PROMPT_COACH_SCRIPT,
+            "info": PROMPT_COACH_INFO,
+        }
+        _system_prompt = PROMPT_COACH_BASE + "\n\n" + _COACH_PROMPT_MAP.get(_coach_subtype, PROMPT_COACH_INFO)
+
+        # Зберігаємо тип для follow-up routing
+        await state.update_data(last_coach_type=_coach_subtype)
 
         # Extract facts (step 1) — для всіх coach-запитів окрім feedback (type C)
         # INFO теж отримує extracted facts щоб GPT не пропускав точні цифри
