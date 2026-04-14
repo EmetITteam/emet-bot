@@ -1664,10 +1664,15 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
             "не вірно", "не верно", "переплутав", "перепутал",
         ]
         _is_type_c = any(kw in t_lower for kw in _TYPE_C_KEYWORDS)
-        # Паттерн виправлення: "X - не Y" / "не X, а Y" / "X, не Y"
-        # Наприклад: "6 міс, не 3 міс" / "інтервал 6 міс - не 3 міс"
+        # Паттерн виправлення: "N одиниця - не M" де N,M — числа
+        # Правильно: "6 міс - не 3 міс", "18 місяців, а не 12"
+        # Неправильно (НЕ матчити): "Petaran - не бачу результату"
         import re as _re
-        if not _is_type_c and _re.search(r'\s(-\s*не|,\s*не|,\s*а\s+не)\s+\w', t_lower):
+        _CORRECTION_NUM_PATTERN = (
+            r'\b\d+\s*(міс|мес|мес\.|год|дн|%|мг|мл|мкм|\bл\b|шт)'
+            r'\S*\s*[-,]\s*(а\s+)?не\s+\d+'
+        )
+        if not _is_type_c and _re.search(_CORRECTION_NUM_PATTERN, t_lower):
             _is_type_c = True
 
         # Тип B: менеджер дав свою відповідь для оцінки
