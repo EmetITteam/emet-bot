@@ -9,8 +9,8 @@ services:
       POSTGRES_DB: ${POSTGRES_DB}
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
-      TZ: Europe/Kiev
-      PGTZ: Europe/Kiev
+      TZ: Europe/Kyiv
+      PGTZ: Europe/Kyiv
     volumes:
       - postgres_data:/var/lib/postgresql/data
     healthcheck:
@@ -28,7 +28,7 @@ services:
       - .env
     environment:
       - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
-      - TZ=Europe/Kiev
+      - TZ=Europe/Kyiv
     volumes:
       - ./data:/app/data
       # credentials.json більше не монтується — використовуємо GOOGLE_SERVICE_ACCOUNT_JSON у .env
@@ -52,7 +52,7 @@ services:
       - .env
     environment:
       - DATABASE_URL=postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB}
-      - TZ=Europe/Kiev
+      - TZ=Europe/Kyiv
     volumes:
       - ./data:/app/data
     ports:

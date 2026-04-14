@@ -16,7 +16,7 @@ load_dotenv()
 _pool: psycopg2.pool.ThreadedConnectionPool | None = None
 
 
-TZ = os.getenv("TZ", "Europe/Kiev")
+TZ = os.getenv("TZ", "Europe/Kyiv")
 
 
 def _get_pool() -> psycopg2.pool.ThreadedConnectionPool:
