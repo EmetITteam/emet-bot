@@ -1347,6 +1347,7 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
         "esse", "эссе", "ессе",
         "iuse hair", "iuse хеір", "iuse хеир", "айюз хеір",
         "iuse skin", "iuse скінбустер", "скінбустер", "skinbooster",
+        "iuse sb", "скін бустер", "скинбустер", "skin booster", "sb ha20",
         "iuse collagen", "iuse колаген", "айюз колаген",
         "iuse", "айюз", "июз",
         "neuronox", "нейронокс",
@@ -1374,17 +1375,27 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
         "iuse хеир": "IUSE HAIR REGROWTH", "айюз хеір": "IUSE HAIR REGROWTH",
         "iuse skin": "IUSE SKINBOOSTER HA 20", "iuse скінбустер": "IUSE SKINBOOSTER HA 20",
         "скінбустер": "IUSE SKINBOOSTER HA 20", "skinbooster": "IUSE SKINBOOSTER HA 20",
+        "iuse sb": "IUSE SKINBOOSTER HA 20", "скін бустер": "IUSE SKINBOOSTER HA 20",
+        "скинбустер": "IUSE SKINBOOSTER HA 20", "skin booster": "IUSE SKINBOOSTER HA 20",
+        "sb ha20": "IUSE SKINBOOSTER HA 20",
         "iuse collagen": "IUSE Collagen", "iuse колаген": "IUSE Collagen", "айюз колаген": "IUSE Collagen",
         "iuse": "IUSE", "айюз": "IUSE", "июз": "IUSE",
         "neuronox": "Neuronox", "нейронокс": "Neuronox",
         "magnox": "Magnox", "магнокс": "Magnox",
     }
     _OBJECTION_KEYWORDS = [
-        "дорого", "дорогой", "дорога", "дорогую", "дорогое",
+        "дорого", "дорогой", "дорога", "дорогую", "дорогое", "дорогий", "дорогі", "дороге",
+        "такий дорогий", "такой дорогой", "занадто дорог", "слишком дорог",
         "не вірю", "не верю", "подумаю", "подумать",
-        "є дешевше", "есть дешевле", "дешевле",
+        "є дешевше", "есть дешевле", "дешевле", "дешевше",
         "не впевнений", "не уверен",
         "не потрібно", "не нужно",
+        "не хоче", "не хочет", "не хочу купувати", "не хочет покупать",
+        "не купує", "не покупает", "відмовляєть", "отказывает",
+        "надає перевагу", "отдает предпочтение", "предпочитает",
+        "моно препарат", "монопрепарат", "мульти склад", "мульти состав",
+        "пече", "жжет", "болить", "больно", "побічка", "побочка", "ускладнення",
+        "вже працює з", "уже работает с", "вже використовує", "уже использует",
     ]
     # _SCRIPT_KEYWORDS визначений вище і переюзається тут
     t_lower = t
