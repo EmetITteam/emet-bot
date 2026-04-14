@@ -859,18 +859,43 @@ RAG_SCORE_THRESHOLD    = 1.5    # permissive threshold — log scores for tuning
 
 # Product name normalization for RAG search queries
 _QUERY_NORMALIZE = {
-    "токс ай": "Tox Eye", "витаран токс": "Vitaran Tox Eye",
-    "вайтнінг": "Whitening", "вайтинг": "Whitening",
+    # Vitaran Tox Eye — all transliterations
+    "токс ай": "HP Cell Vitaran Tox Eye Face Collagen склад",
+    "тохтай": "HP Cell Vitaran Tox Eye Face Collagen склад",
+    "тох тай": "HP Cell Vitaran Tox Eye Face Collagen склад",
+    "витаран токс": "HP Cell Vitaran Tox Eye Face Collagen",
+    "витаран ай": "HP Cell Vitaran Tox Eye Face Collagen",
+    "вітаран ай": "HP Cell Vitaran Tox Eye Face Collagen",
+    "tox eye": "HP Cell Vitaran Tox Eye Face Collagen",
+    # Vitaran Whitening — all transliterations
+    "вайтнінг": "HP Cell Vitaran Whitening Anti-Aging глутатіон склад",
+    "вайтинг": "HP Cell Vitaran Whitening Anti-Aging глутатіон склад",
+    "вайтенинг": "HP Cell Vitaran Whitening Anti-Aging глутатіон склад",
+    "whitening": "HP Cell Vitaran Whitening Anti-Aging",
+    # IUSE
     "скінбустер": "IUSE SKINBOOSTER HA 20", "скін бустер": "IUSE SKINBOOSTER HA 20",
     "скін хілер": "Vitaran Skin Healer",
-    "ессе": "ESSE Esse", "эссе": "ESSE Esse",
-    "елансе": "Ellanse Ellansé", "еланс": "Ellanse Ellansé",
-    "нейраміс": "Neuramis", "нейрамис": "Neuramis",
-    "нейронокс": "Neuronox", "петаран": "Petaran PLLA",
-    "ексоксе": "Exoxe EXOXE", "экзокс": "Exoxe EXOXE",
-    "хп сел": "HP Cell Vitaran", "hp сел": "HP Cell Vitaran",
-    "айюз хеір": "IUSE HAIR REGROWTH", "iuse хеір": "IUSE HAIR REGROWTH",
-    "лізат": "лізати Esse пробіотики", "пребіотик": "пребіотики Esse",
+    # ESSE — all variants
+    "ессе": "ESSE Esse Skincare космецевтика пробіотики",
+    "эссе": "ESSE Esse Skincare космецевтика пробіотики",
+    "esse": "ESSE Esse Skincare космецевтика пробіотики",
+    # Ellanse
+    "елансе": "Ellanse Ellansé PCL філер", "еланс": "Ellanse Ellansé PCL",
+    "элансе": "Ellanse Ellansé PCL", "эллансе": "Ellanse Ellansé PCL",
+    # Others
+    "нейраміс": "Neuramis філер", "нейрамис": "Neuramis філер",
+    "нейронокс": "Neuronox ботулотоксин", "петаран": "Petaran PLLA біостимулятор",
+    "ексоксе": "Exoxe EXOXE екзосоми", "экзокс": "Exoxe EXOXE екзосоми",
+    "хп сел": "HP Cell Vitaran PDRN", "hp сел": "HP Cell Vitaran PDRN",
+    "hp cell": "HP Cell Vitaran PDRN",
+    "айюз хеір": "IUSE HAIR REGROWTH волосся", "iuse хеір": "IUSE HAIR REGROWTH",
+    "iuse hair": "IUSE HAIR REGROWTH волосся",
+    "лізат": "лізати Esse пробіотики лактобактерії",
+    "пребіотик": "пребіотики Esse олігосахариди",
+    # Common query words that need product context
+    "состав": "склад компоненти концентрація мг",
+    "производитель": "виробник країна дистриб'ютор",
+    "страна": "країна виробник ПАР Корея",
 }
 
 def _normalize_query(query: str) -> str:
