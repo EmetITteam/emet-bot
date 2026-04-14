@@ -45,10 +45,15 @@ BRAND_CHECKS = {
     "Magnox":            ("Що таке Magnox 520?",               ["магній"]),
 }
 
-# Minimum chunk counts per index (from verified 2026-04-07 state)
-MIN_PRODUCTS = 600
-MIN_COMPETITORS = 600
-MIN_LMS = 130
+# Minimum chunk counts per index (after empty-chunk filter, 2026-04-14)
+MIN_PRODUCTS = 580
+MIN_COMPETITORS = 595
+MIN_LMS = 120
+
+# Файли в Coach що містять тільки заголовок без контенту — фільтр sync_manager їх відкидає
+HEADING_ONLY_FILES = {
+    "ELLANSE_ умови семинара.docx",
+}
 
 
 def run_integrity_check(verbose=True):
@@ -104,6 +109,9 @@ def run_integrity_check(verbose=True):
         in_comp = comp["sources"].get(src, 0)
 
         if not in_prod and not in_comp:
+            # Файли що містять тільки заголовок (<80 chars контенту) фільтруються — це OK
+            if src in HEADING_ONLY_FILES:
+                continue
             missing.append(f"{src} ({cnt} chunks)")
         elif is_comp and in_prod > 0 and in_comp == 0:
             wrong_cat.append(f"{src} → should be COMP but in PROD")
