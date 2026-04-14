@@ -188,6 +188,9 @@ class UserState(StatesGroup):
 
 # --- 3. СИСТЕМНЫЕ ПРОМПТЫ ---
 from prompts import SYSTEM_PROMPTS
+from prompts_v2 import (PROMPT_EXTRACT, PROMPT_COACH_BASE, PROMPT_COACH_SOS,
+                        PROMPT_COACH_EVALUATE, PROMPT_COACH_FEEDBACK,
+                        PROMPT_COACH_INFO, PROMPT_COACH_SCRIPT, PROMPT_COACH_VISIT)
 
 
 # --- 4. ИНТЕРФЕЙС (МЕНЮ) ---
@@ -1017,6 +1020,41 @@ def get_context(query, mode="kb", provider="openai", has_competitor=False):
         return _extract_docs(docs_products + docs_comp)
 
 
+async def extract_coaching_facts(context: str, user_query: str) -> str:
+    """Step 1: Extract relevant facts from RAG context using GPT-4o-mini."""
+    try:
+        response = await client_openai.chat.completions.create(
+            model=MODEL_OPENAI,  # gpt-4o-mini
+            timeout=15,
+            messages=[
+                {"role": "system", "content": PROMPT_EXTRACT},
+                {"role": "user", "content": f"КОНТЕКСТ:\n{context}\n\nЗАПИТ МЕНЕДЖЕРА:\n{user_query}"}
+            ],
+            temperature=0.0,
+            max_tokens=800
+        )
+        return response.choices[0].message.content.strip()
+    except Exception as e:
+        logger.warning("Extract facts failed: %s", e)
+        return ""
+
+
+def _select_coach_prompt(has_objection, is_script, is_type_b, is_type_c, is_visit=False):
+    """Select the right sub-prompt for coaching mode."""
+    base = PROMPT_COACH_BASE
+    if is_type_c:
+        return base + "\n\n" + PROMPT_COACH_FEEDBACK
+    if is_type_b:
+        return base + "\n\n" + PROMPT_COACH_EVALUATE
+    if is_visit:
+        return base + "\n\n" + PROMPT_COACH_VISIT
+    if has_objection:
+        return base + "\n\n" + PROMPT_COACH_SOS
+    if is_script:
+        return base + "\n\n" + PROMPT_COACH_SCRIPT
+    return base + "\n\n" + PROMPT_COACH_INFO
+
+
 async def detect_intent(query: str) -> str:
     try:
         response = await client_openai.chat.completions.create(
@@ -1563,6 +1601,47 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
     else:
         llm_user_text = text
 
+    # --- Модульний промпт v2: вибір sub-prompt для coach ---
+    if mode_key == "coach":
+        # Тип C: менеджер виправляє бота / каже "я відповіла краще"
+        _TYPE_C_KEYWORDS = [
+            "ти помилився", "ты ошибся", "неправильно", "не правильно",
+            "я відповіла краще", "я ответила лучше", "моя відповідь краща",
+            "маєте рацію", "маєш рацію", "ні, правильно", "нет, правильно",
+            "виправлення", "исправление", "не так", "ти не правий", "ты не прав",
+        ]
+        _is_type_c = any(kw in t_lower for kw in _TYPE_C_KEYWORDS)
+
+        # Тип B: менеджер дав свою відповідь для оцінки
+        _TYPE_B_KEYWORDS = [
+            "оціни мою відповідь", "оцени мой ответ", "оціни відповідь",
+            "я відповіла", "я ответила", "я сказала", "я сказав",
+            "моя відповідь", "мой ответ", "як я відповіла", "как я ответила",
+            "я написала", "я написав", "подивись мою відповідь", "посмотри мой ответ",
+        ]
+        _is_type_b = any(kw in t_lower for kw in _TYPE_B_KEYWORDS)
+
+        # Тип E: підготовка до візиту
+        _VISIT_KEYWORDS = [
+            "готуюсь до візиту", "готовлюсь к визиту", "готуюсь до зустрічі",
+            "підготовка до візиту", "підготовка до зустрічі", "підготуй до візиту",
+            "брифінг перед", "брифинг перед", "йду до лікаря", "иду к врачу",
+            "перший візит", "первый визит", "зустріч з лікарем", "встреча с врачом",
+            "готуюсь до лікаря", "готовлюсь к врачу",
+        ]
+        _is_visit = any(kw in t_lower for kw in _VISIT_KEYWORDS)
+
+        _system_prompt = _select_coach_prompt(
+            _has_objection or bool(_detected_competitor), _is_script_request,
+            _is_type_b, _is_type_c, _is_visit
+        )
+
+        # Extract facts (step 1) — тільки для SOS/скрипт/візит запитів де потрібна конкретика
+        _needs_extract = (_has_objection or bool(_detected_competitor) or _is_script_request or _is_visit) and not _is_type_c
+    else:
+        _system_prompt = SYSTEM_PROMPTS[mode_key]
+        _needs_extract = False
+
     ai_used = "OpenAI"
     context, sources = "", {}
     answer = None
@@ -1585,13 +1664,19 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
             context, sources = await loop.run_in_executor(None, get_context, search_query, mode_key, "openai", bool(_detected_competitor))
             if not context.strip():
                 _context_was_empty = True
+            # Step 1: extract facts для SOS/скрипт (паралельно не можна — потребує context)
+            _llm_context = context
+            if _needs_extract and context.strip():
+                _extracted = await extract_coaching_facts(context, text)
+                if _extracted:
+                    _llm_context = f"ВИТЯГНУТІ ФАКТИ:\n{_extracted}\n\n{context}"
             stream = await client_openai.chat.completions.create(
                 model=_model,
                 timeout=LLM_TIMEOUT,
                 messages=[
-                    {"role": "system", "content": SYSTEM_PROMPTS[mode_key]},
+                    {"role": "system", "content": _system_prompt},
                     *chat_history,
-                    {"role": "user", "content": f"КОНТЕКСТ:\n{context}\n\n⚠️ НАГАДУВАННЯ: 1) Цифри ТІЛЬКИ з контексту 2) Дані ⚠️КОНКУРЕНТ = чужі, не наші 3) Пріоритет: 📘LMS > інші 4) Перед 'немає інформації' — перечитай ВЕСЬ контекст\n\nВОПРОС:\n{llm_user_text}"}
+                    {"role": "user", "content": f"КОНТЕКСТ:\n{_llm_context}\n\n⚠️ НАГАДУВАННЯ: 1) Цифри ТІЛЬКИ з контексту 2) Дані ⚠️КОНКУРЕНТ = чужі, не наші 3) Пріоритет: 📘LMS > інші 4) Перед 'немає інформації' — перечитай ВЕСЬ контекст\n\nВОПРОС:\n{llm_user_text}"}
                 ],
                 stream=True,
                 stream_options={"include_usage": True},
@@ -1661,7 +1746,7 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
             loop = asyncio.get_running_loop()
             context, sources = await loop.run_in_executor(None, get_context, search_query, mode_key, "google", bool(_detected_competitor))
             # Structured chat for Gemini — separate system, history, and user turns
-            gemini_contents = [{"role": "user", "parts": [{"text": SYSTEM_PROMPTS[mode_key]}]},
+            gemini_contents = [{"role": "user", "parts": [{"text": _system_prompt}]},
                                {"role": "model", "parts": [{"text": "Зрозуміло, працюю за інструкціями."}]}]
             for msg in chat_history:
                 g_role = "user" if msg["role"] == "user" else "model"
@@ -1696,7 +1781,7 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
                 model=MODEL_CLAUDE,
                 max_tokens=LLM_CLAUDE_MAX_TOKENS,
                 timeout=LLM_TIMEOUT,
-                system=SYSTEM_PROMPTS[mode_key],
+                system=_system_prompt,
                 messages=[
                     *chat_history,
                     {"role": "user", "content": f"КОНТЕКСТ:\n{context}\n\n⚠️ НАГАДУВАННЯ: 1) Цифри ТІЛЬКИ з контексту 2) Дані ⚠️КОНКУРЕНТ = чужі, не наші 3) Пріоритет: 📘LMS > інші 4) Перед 'немає інформації' — перечитай ВЕСЬ контекст\n\nВОПРОС:\n{llm_user_text}"}
