@@ -204,9 +204,23 @@ def get_main_menu():
     builder.button(text="🔍 Розбір кейсів", callback_data="set_cases")
     builder.button(text="⚙️ Операційні питання", callback_data="set_operational")
     builder.button(text="🌱 Онбординг", callback_data="set_onboarding")
+    builder.button(text="📸 До/Після", callback_data="set_before_after")
     builder.button(text="👤 Мій профіль", callback_data="show_profile")
     builder.adjust(1)
     return builder.as_markup()
+
+
+# Кейси До/Після — посилання на links.emet.in.ua по брендам
+BEFORE_AFTER_LINKS = {
+    "Ellansé": "https://links.emet.in.ua/ellanse-do-i-pislya/",
+    "Petaran PLLA": "https://links.emet.in.ua/protokol-zastosuvannya-petaran-poly-plla/",
+    "Vitaran": "https://links.emet.in.ua/vitaran/case-vitaran/",
+    "EXOXE": "https://links.emet.in.ua/exoxe/case-exoxe/",
+    "Neuramis": "https://links.emet.in.ua/neuramis_before_and_after/",
+    "IUSE Hair": "https://links.emet.in.ua/casey/",
+    "IUSE Skin Booster": "https://links.emet.in.ua/%d0%ba%d0%b5%d0%b9%d1%81%d0%b8-iuse-skin-boostercasey-2/",
+    "ESSE": "https://links.emet.in.ua/esse_before_and_after/",
+}
 
 # --- 5. БАЗА ДАННЫХ ---
 def init_db():
@@ -2620,6 +2634,21 @@ async def coach_seasonal(callback: types.CallbackQuery, state: FSMContext):
         "• _«Кінець року — акції та знижки»_\n\n"
         "Отримаєте готовий сезонний скрипт.",
         parse_mode="Markdown"
+    )
+    await callback.answer()
+
+
+@dp.callback_query(F.data == "set_before_after")
+async def before_after_menu(callback: types.CallbackQuery):
+    builder = InlineKeyboardBuilder()
+    for brand, url in BEFORE_AFTER_LINKS.items():
+        builder.button(text=f"📸 {brand}", url=url)
+    builder.button(text="🏠 Головне меню", callback_data="go_home")
+    builder.adjust(1)
+    await callback.message.answer(
+        "📸 *Кейси До/Після*\n\nОберіть бренд щоб переглянути результати:",
+        parse_mode="Markdown",
+        reply_markup=builder.as_markup()
     )
     await callback.answer()
 
