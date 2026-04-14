@@ -1636,8 +1636,9 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
             _is_type_b, _is_type_c, _is_visit
         )
 
-        # Extract facts (step 1) — тільки для SOS/скрипт/візит запитів де потрібна конкретика
-        _needs_extract = (_has_objection or bool(_detected_competitor) or _is_script_request or _is_visit) and not _is_type_c
+        # Extract facts (step 1) — для всіх coach-запитів окрім feedback (type C)
+        # INFO теж отримує extracted facts щоб GPT не пропускав точні цифри
+        _needs_extract = not _is_type_c
     else:
         _system_prompt = SYSTEM_PROMPTS[mode_key]
         _needs_extract = False
