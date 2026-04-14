@@ -240,6 +240,19 @@ def _split_coach_to_products_competitors():
     except Exception as e:
         print(f"  [split] LMS add error: {e}")
 
+    # Filter out heading-only / empty chunks (sync bug protection)
+    def _has_real_content(d):
+        # Видаляємо markdown-заголовки та пробіли — рахуємо реальні символи
+        text = d.page_content
+        for line in text.split("\n"):
+            s = line.strip()
+            if s and not s.startswith("#"):
+                return len(text.strip()) >= 80  # мінімум 80 символів реального контенту
+        return False
+
+    products = [d for d in products if _has_real_content(d)]
+    competitors = [d for d in competitors if _has_real_content(d)]
+
     # Rebuild both indices
     for path, docs, label in [(products_dir, products, "products"), (competitors_dir, competitors, "competitors")]:
         shutil.rmtree(path, ignore_errors=True)
