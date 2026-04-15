@@ -408,6 +408,61 @@ def product_search_keywords(primary: str | None, variant: str | None) -> list[st
     return [primary]
 
 
+VALIDATOR_PROMPT = """\
+Ти — валідатор відповідей EMET-бота. Перевіряєш відповідь бота на відповідність запиту.
+
+ВХІДНІ ДАНІ:
+- Запит менеджера
+- Згенерована відповідь бота
+- Очікуваний продукт (з classifier)
+
+ПЕРЕВІРЯЙ 3 КРИТЕРІЇ:
+1. Чи відповідь про той самий продукт що в запиті? (не плутає продукти)
+2. Чи зафіксовано правильні цифри (концентрація, місяці, процедури)? Вкажи явні цифри у відповіді.
+3. Чи не пропущені критичні нюанси (наприклад "не в одну зону" замість "не можна")?
+
+ФОРМАТ ВІДПОВІДІ (JSON):
+{
+  "valid": true/false,
+  "issues": ["список виявлених проблем коротко"],
+  "severity": "low" | "medium" | "high"  // high — треба перегенерувати
+}
+
+Якщо все ОК — valid=true, issues=[], severity="low".
+Якщо відповідь про не той продукт — severity="high".
+Якщо цифри правильні але формулювання можна покращити — severity="low" і issues з коментарями.
+"""
+
+
+async def validate_answer(client, query, answer, expected_product, model="gpt-4o-mini"):
+    """
+    Валідатор відповіді. Повертає {valid: bool, issues: list, severity: str}.
+    Використовується тільки для low-confidence інтентів або critical verbatim.
+    """
+    import json as _json
+    try:
+        user_msg = (
+            f"ЗАПИТ МЕНЕДЖЕРА:\n{query}\n\n"
+            f"ОЧІКУВАНИЙ ПРОДУКТ: {expected_product or 'не визначено'}\n\n"
+            f"ВІДПОВІДЬ БОТА:\n{answer[:3000]}"  # обрізаємо щоб не перевитрачати токени
+        )
+        resp = await client.chat.completions.create(
+            model=model,
+            timeout=15,
+            temperature=0.0,
+            max_tokens=300,
+            response_format={"type": "json_object"},
+            messages=[
+                {"role": "system", "content": VALIDATOR_PROMPT},
+                {"role": "user", "content": user_msg}
+            ]
+        )
+        return _json.loads(resp.choices[0].message.content.strip())
+    except Exception as e:
+        logger.warning("Validator failed: %s", e)
+        return {"valid": True, "issues": [], "severity": "low"}
+
+
 INTENT_TO_COACH_SUBTYPE = {
     # Sales
     "objection_price": "sos",

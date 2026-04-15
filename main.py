@@ -192,7 +192,8 @@ class UserState(StatesGroup):
 from prompts import SYSTEM_PROMPTS
 from prompts_v2 import (PROMPT_EXTRACT, PROMPT_COACH_BASE, PROMPT_COACH_SOS,
                         PROMPT_COACH_EVALUATE, PROMPT_COACH_FEEDBACK,
-                        PROMPT_COACH_INFO, PROMPT_COACH_SCRIPT, PROMPT_COACH_VISIT)
+                        PROMPT_COACH_INFO, PROMPT_COACH_SCRIPT, PROMPT_COACH_VISIT,
+                        PROMPT_COACH_VERBATIM)
 from classifier import (classify as _classify_intent, normalize_product,
                         product_search_keywords, INTENT_TO_COACH_SUBTYPE)
 
@@ -1009,8 +1010,11 @@ def _search_with_score(vdb, query, k, threshold=RAG_SCORE_THRESHOLD):
         return vdb.similarity_search(query, k=k)
 
 
-def get_context(query, mode="kb", provider="openai", has_competitor=False):
-    """3-zone RAG search: products / products+competitors / kb."""
+def get_context(query, mode="kb", provider="openai", has_competitor=False, product_canonical=None):
+    """
+    3-zone RAG search.
+    product_canonical: якщо передано — фільтр чанків по metadata (product-locked retrieval).
+    """
     normalized_query = _normalize_query(query)
 
     if mode in ("kb", "cases", "operational"):
@@ -1019,15 +1023,27 @@ def get_context(query, mode="kb", provider="openai", has_competitor=False):
 
     if mode == "combo":
         vdb = _get_vdb("products", provider)
-        docs = _search_with_score(vdb, normalized_query, RAG_K_COMBO)
+        # Combo теж підтримує product-lock
+        if product_canonical:
+            docs = _search_with_product_filter(vdb, normalized_query, RAG_K_COMBO, product_canonical)
+        else:
+            docs = _search_with_score(vdb, normalized_query, RAG_K_COMBO)
         if not docs:
             docs = vdb.similarity_search(normalized_query, k=RAG_K_COMBO)
         return _extract_docs(docs)
 
-    # Coach mode — 3-zone logic
+    # Coach mode — 3-zone logic з product-lock
     vdb_products = _get_vdb("products", provider)
     vdb_competitors = _get_vdb("competitors", provider)
 
+    if product_canonical:
+        # PRODUCT-LOCKED: фільтруємо чанки тільки про цей продукт
+        docs_ours = _search_with_product_filter(vdb_products, normalized_query, RAG_K_PRODUCTS, product_canonical)
+        # Для конкурентів продуктовий фільтр не застосовуємо (конкурентні чанки не мають product_canonical нашого продукту)
+        docs_comp = _search_with_score(vdb_competitors, normalized_query, RAG_K_COMPETITORS) if has_competitor else []
+        return _extract_docs(docs_ours + docs_comp)
+
+    # Fallback — без продуктового фільтра (стара логіка)
     if has_competitor:
         docs_ours = _search_with_score(vdb_products, normalized_query, RAG_K_PRODUCTS)
         docs_comp = _search_with_score(vdb_competitors, normalized_query, RAG_K_COMPETITORS)
@@ -1036,6 +1052,42 @@ def get_context(query, mode="kb", provider="openai", has_competitor=False):
         docs_products = _search_with_score(vdb_products, normalized_query, RAG_K_PRODUCTS)
         docs_comp = _search_with_score(vdb_competitors, normalized_query, RAG_K_COMPETITORS)
         return _extract_docs(docs_products + docs_comp)
+
+
+def _search_with_product_filter(vdb, query, k, product_canonical):
+    """
+    Пошук з фільтром по metadata.product_canonical.
+    Повертає topK найрелевантніших чанків цього продукту.
+    Якщо для продукту мало чанків — розширюємо пошук на суміжні варіанти.
+    """
+    try:
+        # Спроба 1: точний фільтр по продукту
+        docs = vdb.similarity_search(
+            query, k=k,
+            filter={"product_canonical": product_canonical}
+        )
+        if len(docs) >= k // 2:
+            logger.info("RAG product-locked: found %d chunks for %s", len(docs), product_canonical)
+            return docs
+
+        # Спроба 2: для Vitaran-варіантів — додатково generic "Vitaran"
+        if product_canonical.startswith("HP Cell Vitaran") or product_canonical == "Vitaran Skin Healer":
+            generic_docs = vdb.similarity_search(
+                query, k=k // 2,
+                filter={"product_canonical": "Vitaran"}
+            )
+            docs = docs + generic_docs
+            logger.info("RAG product-locked: %d specific + %d generic for %s", len(docs) - len(generic_docs), len(generic_docs), product_canonical)
+            return docs[:k]
+
+        # Спроба 3: якщо нічого не знайшли — fallback на звичайний пошук
+        if not docs:
+            logger.warning("RAG product-locked: NO chunks for %s, fallback to semantic", product_canonical)
+            return vdb.similarity_search(query, k=k)
+        return docs
+    except Exception as e:
+        logger.error("RAG product-locked failed: %s, fallback", e)
+        return vdb.similarity_search(query, k=k)
 
 
 async def extract_coaching_facts(context: str, user_query: str) -> str:
@@ -1268,39 +1320,53 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
     _has_emet_product_early = any(_match_product(p, _t_lower_early) for p in _EMET_PRODUCT_NAMES_EARLY)
 
     _search_query_ready = None  # буде заповнено паралельно якщо пройдемо через else
-    if _combo_from_button or _is_combo_query:
+    # Classifier — ГОЛОВНИЙ роутер. Legacy keywords лишаються тільки для certs + operational.
+    _classifier_result = None
+
+    if _combo_from_button:
         mode_key = "combo"
-    elif _has_emet_product_early:
-        # Назва EMET-препарату → завжди coach (навіть якщо є "семінар", "документи" тощо)
-        mode_key = "coach"
     elif _is_operational_early:
         mode_key = "operational"
-    elif (_is_script_early or _is_coach_followup) and chat_history:
-        mode_key = "coach"
     else:
-        # detect_intent + prepare_search_query + classifier (canary) — паралельно
-        mode_key, _search_query_ready, _classifier_result = await asyncio.gather(
-            detect_intent(text),
-            prepare_search_query(text),
+        # classifier + prepare_search_query паралельно
+        _classifier_result, _search_query_ready = await asyncio.gather(
             _classify_intent(client_openai, text, chat_history[-4:] if chat_history else None),
+            prepare_search_query(text),
         )
-        # Canary-логування: порівнюємо classifier з legacy keywords
-        try:
-            _full_product = normalize_product(
-                _classifier_result.get("primary_product"),
-                _classifier_result.get("product_variant")
+        _intent = _classifier_result.get("intent", "info_about_product")
+        _conf = _classifier_result.get("confidence", 0.0)
+        _full_product = normalize_product(
+            _classifier_result.get("primary_product"),
+            _classifier_result.get("product_variant")
+        )
+        logger.info(
+            "CLASSIFIER user=%s | intent=%s product=%s variant=%s comp=%s verbatim=%s conf=%.2f",
+            message.from_user.id, _intent, _full_product,
+            _classifier_result.get("product_variant"),
+            _classifier_result.get("competitor"),
+            _classifier_result.get("needs_verbatim"),
+            _conf
+        )
+
+        # Маппінг intent → mode_key
+        if _intent in ("combo_with_product", "combo_for_indication"):
+            mode_key = "combo"
+        elif _intent in ("greeting", "out_of_scope"):
+            # Для greeting повертаємо коротку відповідь через KB-режим (або dedicated handler)
+            mode_key = "kb"
+        elif _intent == "unclear_no_product" and not chat_history:
+            # Заперечення без продукту і без історії — попросимо уточнити
+            await message.answer(
+                "📝 Про який продукт йде мова?\n\n"
+                "Напиши заперечення разом з назвою препарату — дам конкретну SOS-відповідь "
+                "з цифрами, killer phrase і наступним кроком.\n\n"
+                "_Приклад:_ «Ellanse дорого», «лікар не хоче купувати Neuramis», «Vitaran сильно пече»",
+                parse_mode="Markdown"
             )
-            logger.info(
-                "CLASSIFIER user=%s legacy_mode=%s | intent=%s product=%s variant=%s comp=%s verbatim=%s conf=%.2f",
-                message.from_user.id, mode_key,
-                _classifier_result["intent"], _full_product,
-                _classifier_result.get("product_variant"),
-                _classifier_result.get("competitor"),
-                _classifier_result.get("needs_verbatim"),
-                _classifier_result.get("confidence", 0.0)
-            )
-        except Exception as e:
-            logger.warning("classifier log failed: %s", e)
+            return
+        else:
+            # Всі інші intents — coach режим (classifier визначить підтип нижче)
+            mode_key = "coach"
 
     state_map = {
         "coach":       UserState.mode_coach,
@@ -1689,81 +1755,24 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
     else:
         llm_user_text = text
 
-    # --- Модульний промпт v2: вибір sub-prompt для coach ---
+    # --- Вибір sub-prompt для coach через classifier ---
     if mode_key == "coach":
-        # Тип C: менеджер виправляє бота / каже "я відповіла краще"
-        _TYPE_C_KEYWORDS = [
-            "ти помилився", "ты ошибся", "неправильно", "не правильно",
-            "я відповіла краще", "я ответила лучше", "моя відповідь краща",
-            "маєте рацію", "маєш рацію", "ні, правильно", "нет, правильно",
-            "виправлення", "исправление", "не так", "ти не правий", "ты не прав",
-            "ти помиляєш", "ты ошибаеш", "це невірно", "это неверно",
-            "не вірно", "не верно", "переплутав", "перепутал",
-        ]
-        _is_type_c = any(kw in t_lower for kw in _TYPE_C_KEYWORDS)
-        # Паттерн виправлення: числові виправлення
-        # Правильно: "6 міс - не 3 міс" / "не 20 мг, а 10" / "не 12, а 18"
-        # Неправильно: "Petaran - не бачу результату"
-        import re as _re
-        _CORRECTION_PATTERNS = [
-            # "X (одиниця) - не Y" — старий патерн
-            r'\b\d+\s*(міс|мес|мес\.|год|дн|%|мг|мл|мкм|\bл\b|шт)\S*\s*[-,]\s*(а\s+)?не\s+\d+',
-            # "не X, а Y" або "не X а Y" — числові виправлення з "а"
-            r'\bне\s+\d+\S*\s*,?\s*а\s+\d+',
-            # "не X (одиниця)" коли є інше число поряд (rare correction)
-            r'\bне\s+\d+\s*(міс|мес|мг|мл|%|мкм|год|дн|шт)',
-        ]
-        if not _is_type_c and any(_re.search(p, t_lower) for p in _CORRECTION_PATTERNS):
-            _is_type_c = True
-
-        # Тип B: менеджер дав свою відповідь для оцінки
-        _TYPE_B_KEYWORDS = [
-            "оціни мою відповідь", "оцени мой ответ", "оціни відповідь",
-            "я відповіла", "я ответила", "я сказала", "я сказав",
-            "моя відповідь", "мой ответ", "як я відповіла", "как я ответила",
-            "я написала", "я написав", "подивись мою відповідь", "посмотри мой ответ",
-            "менеджер відповів", "менеджер відповіла", "менеджер сказав", "менеджер сказала",
-            "менеджер ответил", "менеджер ответила", "менеджер сказал",
-            "я ответил", "моя відповідь така", "мой ответ такой",
-        ]
-        _has_type_b_kw = any(kw in t_lower for kw in _TYPE_B_KEYWORDS)
-        # "я відповіла + що робити/як далі" = SOS з контекстом, не evaluate
-        _TYPE_B_OVERRIDE_TO_SOS = [
-            "що робити", "что делать", "як далі", "что дальше",
-            "як відповісти", "что ответить", "як реагувати", "как реагировать",
-            "що сказати", "что сказать", "як бути", "как быть",
-            "не погодився", "не согласился", "відмовив", "отказал",
-        ]
-        _is_type_b = _has_type_b_kw and not any(kw in t_lower for kw in _TYPE_B_OVERRIDE_TO_SOS)
-
-        # Тип E: підготовка до візиту
-        _VISIT_KEYWORDS = [
-            "готуюсь до візиту", "готовлюсь к визиту", "готуюсь до зустрічі",
-            "підготовка до візиту", "підготовка до зустрічі", "підготуй до візиту",
-            "брифінг перед", "брифинг перед", "йду до лікаря", "иду к врачу",
-            "перший візит", "первый визит", "зустріч з лікарем", "встреча с врачом",
-            "готуюсь до лікаря", "готовлюсь к врачу",
-        ]
-        _is_visit = any(kw in t_lower for kw in _VISIT_KEYWORDS)
-
-        # Визначаємо coach sub-type для збереження в state (follow-up routing)
-        if _is_type_c:
-            _coach_subtype = "feedback"
-        elif _is_type_b:
-            _coach_subtype = "evaluate"
-        elif _is_visit:
-            _coach_subtype = "visit"
-        elif _has_objection or bool(_detected_competitor):
-            _coach_subtype = "sos"
-        elif _is_script_request:
-            _coach_subtype = "script"
-        elif _is_coach_followup and not _has_objection and not _is_script_request:
-            # Follow-up без явного типу — продовжуємо в тому самому форматі
-            _coach_subtype = state_data.get("last_coach_type", "info")
+        # Subtype з classifier intent
+        if _classifier_result:
+            _intent = _classifier_result.get("intent", "info_about_product")
+            _coach_subtype = INTENT_TO_COACH_SUBTYPE.get(_intent, "info")
+            # Follow-up: якщо classifier дав info, але користувач продовжує розмову з попереднім типом
+            if _coach_subtype == "info" and chat_history and _classifier_result.get("confidence", 0) < 0.85:
+                _prev_subtype = state_data.get("last_coach_type")
+                if _prev_subtype and _prev_subtype not in ("info", "ask_product", "greeting", "out_of_scope"):
+                    _coach_subtype = _prev_subtype
+                    logger.info("Coach follow-up: kept previous subtype=%s", _prev_subtype)
         else:
+            # Fallback: classifier failed → info
+            _intent = "info_about_product"
             _coach_subtype = "info"
 
-        # Вибір промпту по subtype (підтримує follow-up через last_coach_type)
+        # Вибір промпту по subtype
         _COACH_PROMPT_MAP = {
             "feedback": PROMPT_COACH_FEEDBACK,
             "evaluate": PROMPT_COACH_EVALUATE,
@@ -1772,17 +1781,34 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
             "script": PROMPT_COACH_SCRIPT,
             "info": PROMPT_COACH_INFO,
         }
-        _system_prompt = PROMPT_COACH_BASE + "\n\n" + _COACH_PROMPT_MAP.get(_coach_subtype, PROMPT_COACH_INFO)
+
+        # VERBATIM mode — критичні фактичні запити (protocol/composition/contraindication)
+        _needs_verbatim = _classifier_result and _classifier_result.get("needs_verbatim", False)
+        if _needs_verbatim and _coach_subtype in ("info",):
+            _system_prompt = PROMPT_COACH_BASE + "\n\n" + PROMPT_COACH_VERBATIM
+            logger.info("VERBATIM mode for intent=%s", _intent)
+        else:
+            _system_prompt = PROMPT_COACH_BASE + "\n\n" + _COACH_PROMPT_MAP.get(_coach_subtype, PROMPT_COACH_INFO)
 
         # Зберігаємо тип для follow-up routing
         await state.update_data(last_coach_type=_coach_subtype)
 
-        # Extract facts (step 1) — для всіх coach-запитів окрім feedback (type C)
-        # INFO теж отримує extracted facts щоб GPT не пропускав точні цифри
-        _needs_extract = not _is_type_c
+        # Extract facts — для всіх окрім feedback (виправлення) і greeting
+        _needs_extract = _coach_subtype not in ("feedback",)
+
+        _is_type_c = (_coach_subtype == "feedback")
     else:
         _system_prompt = SYSTEM_PROMPTS[mode_key]
         _needs_extract = False
+        _is_type_c = False
+
+    # Product canonical для RAG filter — з classifier
+    _product_canonical_for_rag = None
+    if _classifier_result:
+        _product_canonical_for_rag = normalize_product(
+            _classifier_result.get("primary_product"),
+            _classifier_result.get("product_variant")
+        )
 
     ai_used = "OpenAI"
     context, sources = "", {}
@@ -1803,7 +1829,8 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
         try:
             loop = asyncio.get_running_loop()
             _model = MODEL_OPENAI_COACH if mode_key in ("coach", "combo") else MODEL_OPENAI
-            context, sources = await loop.run_in_executor(None, get_context, search_query, mode_key, "openai", bool(_detected_competitor))
+            _has_comp = bool(_classifier_result and _classifier_result.get("competitor")) or bool(_detected_competitor)
+            context, sources = await loop.run_in_executor(None, get_context, search_query, mode_key, "openai", _has_comp, _product_canonical_for_rag)
             if not context.strip():
                 _context_was_empty = True
             # Step 1: extract facts для SOS/скрипт (паралельно не можна — потребує context)
@@ -1888,7 +1915,8 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
         ai_used = "Google"
         try:
             loop = asyncio.get_running_loop()
-            context, sources = await loop.run_in_executor(None, get_context, search_query, mode_key, "google", bool(_detected_competitor))
+            _has_comp_g = bool(_classifier_result and _classifier_result.get("competitor")) or bool(_detected_competitor)
+            context, sources = await loop.run_in_executor(None, get_context, search_query, mode_key, "google", _has_comp_g, _product_canonical_for_rag)
             # Structured chat for Gemini — separate system, history, and user turns
             gemini_contents = [{"role": "user", "parts": [{"text": _system_prompt}]},
                                {"role": "model", "parts": [{"text": "Зрозуміло, працюю за інструкціями."}]}]
@@ -1920,7 +1948,8 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
         ai_used = "Claude"
         try:
             loop = asyncio.get_running_loop()
-            context, sources = await loop.run_in_executor(None, get_context, search_query, mode_key, "openai", bool(_detected_competitor))
+            _has_comp = bool(_classifier_result and _classifier_result.get("competitor")) or bool(_detected_competitor)
+            context, sources = await loop.run_in_executor(None, get_context, search_query, mode_key, "openai", _has_comp, _product_canonical_for_rag)
             claude_msg = await client_claude.messages.create(
                 model=MODEL_CLAUDE,
                 max_tokens=LLM_CLAUDE_MAX_TOKENS,
@@ -1964,6 +1993,32 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
     answer = answer.replace("  ", " ")
     # Fix **bold** → *bold* (Telegram doesn't render double asterisks)
     answer = re.sub(r'\*\*(.+?)\*\*', r'*\1*', answer)
+
+    # Validator: перевіряємо відповідь для verbatim/low-confidence інтентів
+    try:
+        _should_validate = (
+            mode_key == "coach"
+            and _classifier_result
+            and (_needs_verbatim or _classifier_result.get("confidence", 1.0) < 0.75)
+            and _product_canonical_for_rag  # тільки коли є очікуваний продукт
+        )
+        if _should_validate and answer and len(answer) > 100:
+            from classifier import validate_answer
+            _validation = await validate_answer(
+                client_openai, text, answer, _product_canonical_for_rag
+            )
+            if not _validation.get("valid", True) and _validation.get("severity") == "high":
+                logger.warning(
+                    "VALIDATOR FAIL (high) user=%s intent=%s issues=%s",
+                    message.from_user.id, _intent, _validation.get("issues")
+                )
+                # Додаємо попередження в кінець відповіді для адміна в логах
+                if ADMIN_ID and message.from_user.id == ADMIN_ID:
+                    answer += f"\n\n_⚠️ Validator flag: {', '.join(_validation.get('issues', []))}_"
+            elif _validation.get("issues"):
+                logger.info("VALIDATOR issues (low) user=%s: %s", message.from_user.id, _validation.get("issues"))
+    except Exception as _e_val:
+        logger.warning("Validator skipped: %s", _e_val)
 
     if used_links:
         final_links = list(set(used_links))
