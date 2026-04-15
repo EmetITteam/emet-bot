@@ -2129,9 +2129,8 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
         builder.button(text="🗣 Заперечення", callback_data="coach_objections")
         builder.button(text="🔗 Комбо", callback_data="coach_combo")
         builder.button(text="📜 Сертифікати", callback_data="coach_certs")
-        builder.button(text="🗓 Сезонні скрипти", callback_data="coach_seasonal")
         builder.button(text="🏠 Головне меню", callback_data="go_home")
-        builder.adjust(2, 2, 2, 1)
+        builder.adjust(2, 2, 1, 1)
         await message.answer("Що далі?", reply_markup=builder.as_markup())
 
 
@@ -2403,7 +2402,7 @@ async def cmd_help(message: types.Message):
         "Корпоративні правила, відпустки, структура компанії, документи.\n\n"
         "*💼 Sales Коуч*\n"
         "Препарати, склади, порівняння, скрипти продажів.\n"
-        "Режими: вільний діалог, 🆘 SOS-підготовка, робота із запереченнями, сезонні скрипти.\n\n"
+        "Режими: вільний діалог, 🆘 SOS-підготовка, робота із запереченнями, комбо-протоколи.\n\n"
         "*🎓 Навчання і тести*\n"
         "Курси з продуктів з уроками та тестами. Є звичайні та 🏆 сертифікаційні тести.\n"
         "Після тесту — AI-аналіз: сильні/слабкі сторони та рекомендації.\n\n"
@@ -2657,7 +2656,6 @@ def get_coach_menu():
     builder.button(text="🗣 Робота з запереченнями", callback_data="coach_objections")
     builder.button(text="🔗 Комбо-протоколи", callback_data="coach_combo")
     builder.button(text="📜 Сертифікати", callback_data="coach_certs")
-    builder.button(text="🗓 Сезонні скрипти", callback_data="coach_seasonal")
     builder.button(text="🏠 Головне меню", callback_data="go_home")
     builder.adjust(1)
     return builder.as_markup()
@@ -2833,23 +2831,6 @@ async def download_cert(callback: types.CallbackQuery, state: FSMContext):
         )
     except Exception as e:
         await callback.message.answer(f"Помилка завантаження: {e}")
-
-
-@dp.callback_query(F.data == "coach_seasonal")
-async def coach_seasonal(callback: types.CallbackQuery, state: FSMContext):
-    await state.set_state(UserState.mode_coach)
-    await state.update_data(chat_history=[])
-    _save_chat_history_db(callback.from_user.id, [])
-    await callback.message.answer(
-        "🗓 *Сезонні скрипти*\n\n"
-        "Напишіть тему або сезон, наприклад:\n"
-        "• _«Весняне оновлення — реклама біоревіталізації»_\n"
-        "• _«Літо — захист та відновлення»_\n"
-        "• _«Кінець року — акції та знижки»_\n\n"
-        "Отримаєте готовий сезонний скрипт.",
-        parse_mode="Markdown"
-    )
-    await callback.answer()
 
 
 @dp.callback_query(F.data == "set_before_after")
