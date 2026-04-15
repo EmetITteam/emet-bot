@@ -1022,12 +1022,10 @@ def get_context(query, mode="kb", provider="openai", has_competitor=False, produ
         return _extract_docs(_search_with_score(vdb, normalized_query, RAG_K_DEFAULT))
 
     if mode == "combo":
+        # Combo НЕ використовує product-lock — потрібно знайти чанки з ОБОМА продуктами
+        # (наприклад "Petaran + Ellanse" — чанк може бути позначений як Petaran OR Ellanse)
         vdb = _get_vdb("products", provider)
-        # Combo теж підтримує product-lock
-        if product_canonical:
-            docs = _search_with_product_filter(vdb, normalized_query, RAG_K_COMBO, product_canonical)
-        else:
-            docs = _search_with_score(vdb, normalized_query, RAG_K_COMBO)
+        docs = _search_with_score(vdb, normalized_query, RAG_K_COMBO)
         if not docs:
             docs = vdb.similarity_search(normalized_query, k=RAG_K_COMBO)
         return _extract_docs(docs)
