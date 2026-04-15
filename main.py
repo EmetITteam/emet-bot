@@ -1368,19 +1368,47 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
         elif (_intent == "unclear_no_product" or
               (_is_short_ambiguous and not _classifier_result.get("primary_product"))
               or (_is_short_ambiguous and chat_history)):
-            # Уточнюємо продукт:
-            # 1) classifier явно сказав unclear
-            # 2) короткий запит без продукту
-            # 3) короткий запит + є history (бот міг підтягнути продукт з попередньої сесії — небезпечно)
+            # Уточнюємо продукт. Приклади відповідають ТИПУ запиту менеджера.
+            _t = _text_stripped
+            if any(w in _t for w in ["дорого", "дорогий", "дорогі", "дороге", "ціна"]):
+                _examples = (
+                    "• «Ellanse дорого»\n"
+                    "• «Vitaran дорогий»\n"
+                    "• «Клієнт вважає Neuramis дорогим»\n"
+                    "• «Petaran ціна висока»"
+                )
+            elif "не хоче" in _t or "не хочет" in _t or "не купує" in _t:
+                _examples = (
+                    "• «лікар не хоче купувати Neuramis»\n"
+                    "• «косметолог не хоче Petaran»\n"
+                    "• «не хоче брати Ellanse»"
+                )
+            elif "не цікав" in _t or "не интерес" in _t:
+                _examples = (
+                    "• «лікарю не цікавить Vitaran»\n"
+                    "• «не актуально для Ellanse»"
+                )
+            elif "подумаю" in _t or "потім" in _t or "пізніше" in _t:
+                _examples = (
+                    "• «лікар каже подумаю про Neuramis»\n"
+                    "• «розгляне Vitaran пізніше»"
+                )
+            elif "не потрібно" in _t or "не нужно" in _t or "не треба" in _t:
+                _examples = (
+                    "• «лікар каже не потрібно Petaran»\n"
+                    "• «не треба Ellanse»"
+                )
+            else:
+                _examples = (
+                    "• «Ellanse дорого»\n"
+                    "• «лікар не хоче купувати Neuramis»\n"
+                    "• «Vitaran сумнівається в ефективності»"
+                )
             await message.answer(
                 "📝 Про який продукт йде мова?\n\n"
                 "Напиши заперечення разом з назвою препарату — дам конкретну SOS-відповідь "
                 "з цифрами, killer phrase і наступним кроком.\n\n"
-                "_Приклади заперечень:_\n"
-                "• «Ellanse дорого»\n"
-                "• «лікар не хоче купувати Neuramis»\n"
-                "• «косметолог вже працює зі Sculptra»\n"
-                "• «IUSE SB моно препарат — не в тренді»",
+                f"_Приклади:_\n{_examples}",
                 parse_mode="Markdown"
             )
             return
