@@ -253,6 +253,61 @@ def _split_coach_to_products_competitors():
     products = [d for d in products if _has_real_content(d)]
     competitors = [d for d in competitors if _has_real_content(d)]
 
+    # Enrich metadata with product_canonical for product-locked RAG retrieval
+    def _detect_product_canonical(doc):
+        """Визначає канонічний продукт з source filename + content."""
+        src = (doc.metadata.get("source", "") or "").lower()
+        text = (doc.page_content or "")[:500].lower()
+        combined = src + " " + text
+
+        # Vitaran варіанти — спочатку специфічні, потім generic
+        if any(k in combined for k in ["whitening", "вайтенинг", "вайтенінг"]):
+            return "HP Cell Vitaran Whitening"
+        if any(k in combined for k in ["tox eye", "тохтай", "токс ай", "tox&face"]):
+            return "HP Cell Vitaran Tox Eye"
+        if any(k in combined for k in ["skin healer", "скін хілер"]):
+            return "Vitaran Skin Healer"
+        if any(k in combined for k in ["vitaran iii", "vitaran_iii"]):
+            return "HP Cell Vitaran iII"
+        if any(k in combined for k in ["vitaran i ", "vitaran_i", "hp cell vitaran i", "hp cell vitaran_i"]):
+            return "HP Cell Vitaran i"
+        if any(k in combined for k in ["vitaran", "вітаран", "витаран", "hp cell"]):
+            return "Vitaran"
+
+        if any(k in combined for k in ["ellans", "елансе", "ellanse"]):
+            return "Ellansé"
+        if any(k in combined for k in ["petaran", "петаран", "poly plla", "полі-l-молочна"]):
+            return "Petaran"
+        if any(k in combined for k in ["exoxe", "ексоксе", "экзосом"]):
+            return "EXOXE"
+        if "neuramis" in combined or "нейрамис" in combined or "нейраміс" in combined:
+            return "Neuramis"
+        if "neuronox" in combined or "нейронокс" in combined:
+            return "Neuronox"
+        if "iuse skin" in combined or "скінбустер" in combined or "skinbooster" in combined or "iuse_sb" in combined:
+            return "IUSE SKINBOOSTER HA 20"
+        if "iuse hair" in combined:
+            return "IUSE HAIR REGROWTH"
+        if "iuse collagen" in combined:
+            return "IUSE Collagen"
+        if "esse" in combined or "ессе" in combined:
+            return "ESSE"
+        if "magnox" in combined or "магнокс" in combined:
+            return "Magnox"
+        if "iuse" in combined:
+            return "IUSE"
+        return None
+
+    for d in products + competitors:
+        canonical = _detect_product_canonical(d)
+        if canonical:
+            d.metadata["product_canonical"] = canonical
+
+    # Лог розподілу по продуктам
+    from collections import Counter
+    prod_dist = Counter(d.metadata.get("product_canonical", "UNKNOWN") for d in products)
+    print(f"  [split] products by canonical: {dict(prod_dist.most_common())}")
+
     # Rebuild both indices
     for path, docs, label in [(products_dir, products, "products"), (competitors_dir, competitors, "competitors")]:
         shutil.rmtree(path, ignore_errors=True)
