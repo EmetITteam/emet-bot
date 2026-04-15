@@ -193,6 +193,8 @@ from prompts import SYSTEM_PROMPTS
 from prompts_v2 import (PROMPT_EXTRACT, PROMPT_COACH_BASE, PROMPT_COACH_SOS,
                         PROMPT_COACH_EVALUATE, PROMPT_COACH_FEEDBACK,
                         PROMPT_COACH_INFO, PROMPT_COACH_SCRIPT, PROMPT_COACH_VISIT)
+from classifier import (classify as _classify_intent, normalize_product,
+                        product_search_keywords, INTENT_TO_COACH_SUBTYPE)
 
 
 # --- 4. ИНТЕРФЕЙС (МЕНЮ) ---
@@ -1276,11 +1278,29 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
     elif (_is_script_early or _is_coach_followup) and chat_history:
         mode_key = "coach"
     else:
-        # detect_intent і prepare_search_query запускаємо паралельно — економія ~300ms
-        mode_key, _search_query_ready = await asyncio.gather(
+        # detect_intent + prepare_search_query + classifier (canary) — паралельно
+        mode_key, _search_query_ready, _classifier_result = await asyncio.gather(
             detect_intent(text),
             prepare_search_query(text),
+            _classify_intent(client_openai, text, chat_history[-4:] if chat_history else None),
         )
+        # Canary-логування: порівнюємо classifier з legacy keywords
+        try:
+            _full_product = normalize_product(
+                _classifier_result.get("primary_product"),
+                _classifier_result.get("product_variant")
+            )
+            logger.info(
+                "CLASSIFIER user=%s legacy_mode=%s | intent=%s product=%s variant=%s comp=%s verbatim=%s conf=%.2f",
+                message.from_user.id, mode_key,
+                _classifier_result["intent"], _full_product,
+                _classifier_result.get("product_variant"),
+                _classifier_result.get("competitor"),
+                _classifier_result.get("needs_verbatim"),
+                _classifier_result.get("confidence", 0.0)
+            )
+        except Exception as e:
+            logger.warning("classifier log failed: %s", e)
 
     state_map = {
         "coach":       UserState.mode_coach,
