@@ -1358,7 +1358,11 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
                 "📝 Про який продукт йде мова?\n\n"
                 "Напиши заперечення разом з назвою препарату — дам конкретну SOS-відповідь "
                 "з цифрами, killer phrase і наступним кроком.\n\n"
-                "_Приклад:_ «Ellanse дорого», «лікар не хоче купувати Neuramis», «Vitaran сильно пече»",
+                "_Приклади заперечень:_\n"
+                "• «Ellanse дорого»\n"
+                "• «лікар не хоче купувати Neuramis»\n"
+                "• «косметолог вже працює зі Sculptra»\n"
+                "• «IUSE SB моно препарат — не в тренді»",
                 parse_mode="Markdown"
             )
             return
@@ -1657,8 +1661,13 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
             and not chat_history and not _early_type_b and not _early_type_c):
         await message.answer(
             "📝 Про який продукт йде мова?\n\n"
-            "Напиши заперечення разом з назвою препарату — і я дам конкретну SOS-відповідь з цифрами, killer phrase і next step.\n\n"
-            "_Приклад:_ «Ellanse дорого», «лікар не хоче купувати Neuramis», «Vitaran сильно пече»",
+            "Напиши заперечення разом з назвою препарату — дам конкретну SOS-відповідь "
+            "з цифрами, killer phrase і наступним кроком.\n\n"
+            "_Приклади заперечень:_\n"
+            "• «Ellanse дорого»\n"
+            "• «лікар не хоче купувати Neuramis»\n"
+            "• «косметолог вже працює зі Sculptra»\n"
+            "• «IUSE SB моно препарат — не в тренді»",
             parse_mode="Markdown"
         )
         return
