@@ -1346,14 +1346,32 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
             _conf
         )
 
+        # Ультракороткі запити-заперечення (context leak захист)
+        _short_objection_words = {
+            "дорого", "дорогий", "дорогі", "дороге",
+            "не хоче", "не хочет", "не цікавить", "не интересует",
+            "подумаю", "не потрібно", "не нужно",
+        }
+        _text_stripped = text.lower().strip().rstrip(".?!")
+        _is_short_ambiguous = (
+            _text_stripped in _short_objection_words
+            or (len(_text_stripped.split()) <= 2
+                and any(_text_stripped == w or _text_stripped.startswith(w + " ")
+                        for w in _short_objection_words))
+        )
+
         # Маппінг intent → mode_key
         if _intent in ("combo_with_product", "combo_for_indication"):
             mode_key = "combo"
         elif _intent in ("greeting", "out_of_scope"):
-            # Для greeting повертаємо коротку відповідь через KB-режим (або dedicated handler)
             mode_key = "kb"
-        elif _intent == "unclear_no_product" and not chat_history:
-            # Заперечення без продукту і без історії — попросимо уточнити
+        elif (_intent == "unclear_no_product" or
+              (_is_short_ambiguous and not _classifier_result.get("primary_product"))
+              or (_is_short_ambiguous and chat_history)):
+            # Уточнюємо продукт:
+            # 1) classifier явно сказав unclear
+            # 2) короткий запит без продукту
+            # 3) короткий запит + є history (бот міг підтягнути продукт з попередньої сесії — небезпечно)
             await message.answer(
                 "📝 Про який продукт йде мова?\n\n"
                 "Напиши заперечення разом з назвою препарату — дам конкретну SOS-відповідь "
