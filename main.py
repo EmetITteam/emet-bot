@@ -1718,11 +1718,17 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
         )
         return
 
+    # Product canonical з classifier — обчислюємо РАНО (треба для llm_user_text і RAG)
+    _product_canonical_for_rag = None
+    if _classifier_result:
+        _product_canonical_for_rag = normalize_product(
+            _classifier_result.get("primary_product"),
+            _classifier_result.get("product_variant")
+        )
+
     # LLM отримує чистий запит — всі інструкції у sub-prompt через classifier
     llm_user_text = text
-
-    # Тільки мінімальна підказка продукту якщо classifier визначив, щоб LLM точно зрозумів контекст
-    if _classifier_result and _product_canonical_for_rag:
+    if _product_canonical_for_rag:
         llm_user_text = f"[Продукт: {_product_canonical_for_rag}]\n\nПИТАННЯ:\n{text}"
 
     # --- Вибір sub-prompt для coach через classifier ---
@@ -1771,14 +1777,6 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
         _system_prompt = SYSTEM_PROMPTS[mode_key]
         _needs_extract = False
         _is_type_c = False
-
-    # Product canonical для RAG filter — з classifier
-    _product_canonical_for_rag = None
-    if _classifier_result:
-        _product_canonical_for_rag = normalize_product(
-            _classifier_result.get("primary_product"),
-            _classifier_result.get("product_variant")
-        )
 
     ai_used = "OpenAI"
     context, sources = "", {}
