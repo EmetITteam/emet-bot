@@ -1688,36 +1688,6 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
         elif _canonical.lower() not in (search_query or "").lower():
             search_query = f"{_canonical} {search_query or text}"
 
-    # Ellansé конкурентний запит — явно вказуємо PCL як перший аргумент
-    _is_ellanse_competitor = (
-        _canonical == "Ellansé"
-        and (_is_competitor_query or _detected_competitor or any(
-            kw in t_lower for kw in ["полімолочн", "полимолочн", "juvelook", "radiesse", "sculptra", "відрізняєть", "отличается"]
-        ))
-    )
-
-    # Заперечення БЕЗ продукту і БЕЗ історії → просимо уточнити, щоб бот не вигадував випадковий продукт з RAG
-    _early_type_b = any(kw in t_lower for kw in [
-        "я відповіла", "я сказала", "менеджер відповів", "менеджер сказав", "оціни"
-    ])
-    _early_type_c = any(kw in t_lower for kw in [
-        "ти помилився", "неправильно", "маєте рацію", "виправлення"
-    ])
-    if (mode_key == "coach" and _has_objection and not _detected_product
-            and not chat_history and not _early_type_b and not _early_type_c):
-        await message.answer(
-            "📝 Про який продукт йде мова?\n\n"
-            "Напиши заперечення разом з назвою препарату — дам конкретну SOS-відповідь "
-            "з цифрами, killer phrase і наступним кроком.\n\n"
-            "_Приклади заперечень:_\n"
-            "• «Ellanse дорого»\n"
-            "• «лікар не хоче купувати Neuramis»\n"
-            "• «косметолог вже працює зі Sculptra»\n"
-            "• «IUSE SB моно препарат — не в тренді»",
-            parse_mode="Markdown"
-        )
-        return
-
     # Product canonical з classifier — обчислюємо РАНО (треба для llm_user_text і RAG)
     _product_canonical_for_rag = None
     if _classifier_result:
