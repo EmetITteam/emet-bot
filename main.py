@@ -1718,95 +1718,12 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
         )
         return
 
-    if mode_key == "coach" and _detected_product and _has_objection and not _is_script_request and not _is_coach_followup:
-        # Заперечення + продукт → SOS-формат (тільки якщо НЕ запит на скрипт/діалог)
-        llm_user_text = (
-            f"[СИСТЕМА: продукт — {_canonical}. "
-            f"Дай SOS-відповідь: коротка готова фраза менеджера + 2-3 тезиси. "
-            f"⛔ НЕ починай з аргументу тривалості дії. Перший аргумент — фінансова вигода лікаря або унікальний механізм.]\n\n"
-            f"ПИТАННЯ:\n{text}"
-        )
-    elif mode_key == "coach" and _is_ellanse_competitor:
-        # Ellansé vs конкурент — підказуємо LLM що PCL є головним диференціатором
-        llm_user_text = (
-            f"[СИСТЕМА: продукт — Ellansé (PCL — полікапролактон). "
-            f"Порівнюючи з конкурентом, ПЕРШИЙ аргумент — механізм PCL: негайний об'єм (CMC-гель) + неоколагенез I типу (PCL-мікросфери). "
-            f"Якщо конкурент — полімолочна кислота (Juvelook, Aesthefill, PLLA): підкресли що Ellansé = об'єм + ліфтинг одночасно, а не лише біостимуляція. "
-            f"Якщо Radiesse: Ellansé дає програмований термін дії (S/M), без ризику міграції кальцію.]\n\n"
-            f"ПИТАННЯ:\n{text}"
-        )
-    elif mode_key == "coach" and _is_script_request and _canonical:
-        # Запит на скрипт/діалог
-        _is_seminar_script = any(kw in t_lower for kw in ["семінар", "семинар"])
-        if _is_seminar_script:
-            llm_user_text = (
-                f"[СИСТЕМА: продукт — {_canonical}. "
-                f"Дай SOS-скрипт запрошення лікаря на семінар по {_canonical}: "
-                f"відкриваюче питання + 3-4 гілки (час/зайнятість, 'і так знаю', незручно, 'не потрібно') + ультра-версія 10 сек. "
-                f"Формат: ⚡ SOS-скрипт з 💬 Крок 1 → 💬 Крок 2 → 🎯 Суть → ультра-версія.]\n\n"
-                f"ПИТАННЯ:\n{text}"
-            )
-        elif _history_objection:
-            llm_user_text = (
-                f"[СИСТЕМА: продукт — {_canonical}. "
-                f"Дай скрипт-діалог менеджера з лікарем. "
-                f"Контекст: заперечення «{_history_objection}» — діалог має відпрацьовувати саме його.]\n\n"
-                f"ПИТАННЯ:\n{text}"
-            )
-        else:
-            # Ellansé + конкурент → підкреслюємо доповнення портфеля (PCL ≠ PLLA/CaHA — різні механізми)
-            # Для інших продуктів (Neuramis vs Juvederm, Vitaran vs Rejuran) — задача "переключити", не "доповнити"
-            _competitor_ctx = (
-                f" Лікар вже працює з {_detected_competitor.title()} — підкресли що Ellansé ДОПОВНЮЄ портфель (PCL vs {_detected_competitor.title()}), не замінює. Не критикуй {_detected_competitor.title()}."
-                if (_canonical == "Ellansé" and _detected_competitor) else ""
-            )
-            llm_user_text = (
-                f"[СИСТЕМА: продукт — {_canonical}. Дай скрипт-діалог менеджера з лікарем.{_competitor_ctx}]\n\n"
-                f"ПИТАННЯ:\n{text}"
-            )
-    elif mode_key == "coach" and _canonical_from_competitor and not _is_script_request and not _has_objection:
-        # Запит про конкурентний продукт без EMET-продукту в тексті ("Розкажи про лінійку Plinest/Реджуран")
-        # Даємо нейтральний фактаж + закриваємо на диференціацію EMET
-        llm_user_text = (
-            f"[СИСТЕМА: запит — інформація про конкурента '{_detected_competitor}' (наш конкурент). "
-            f"ФОРМАТ відповіді: "
-            f"1) Нейтральний фактаж з контексту: склад, механізм, для кого. "
-            f"БЕЗ позитивних оцінок ('чудові результати', 'ефективний', 'популярний') — не продаємо конкурента. "
-            f"Якщо є лише часткові дані — скажи 'У нашому конкурентному аналізі є такі дані: ...' і дай те що є. "
-            f"2) Плавний перехід: 'А ось чим наш {_canonical} відрізняється...' + 2-3 ключові переваги з контексту.]\n\n"
-            f"ПИТАННЯ:\n{text}"
-        )
-    elif mode_key == "coach" and _is_coach_followup:
-        # Продовження тренінгу — "інші аргументи", "розпиши детально"
-        # Визначаємо що вже відкинув лікар (щоб не повторювати)
-        _t_lower_fu = text.lower()
-        _avoid_hint = ""
-        for _neg_marker in ["не интересует", "не цікавить", "не важно", "не важливо", "не актуально", "не актуальн"]:
-            if _neg_marker in _t_lower_fu:
-                _avoid_hint = "Уникай аргументів, які менеджер чи лікар вже відкинув або назвав неактуальними. "
-                break
-        _prod_ctx = f"продукт — {_canonical}. " if _canonical else ""
-        _obj_ctx = f"Заперечення в контексті: «{_history_objection}». " if _history_objection else ""
-        # Якщо коротка афірмація ("Хочу", "Так", "Да нужно") — просимо продовжити те що пропонував
-        if _is_short_affirmation:
-            llm_user_text = (
-                f"[СИСТЕМА: {_prod_ctx}{_obj_ctx}"
-                f"Користувач відповів коротко: «{text}» — це підтвердження запиту з попереднього повідомлення. "
-                f"Виконай саме те, що ти пропонував або на що натякав в останній відповіді. "
-                f"Якщо не зрозуміло що саме — дай детальний розбір або наступний рівень деталізації по темі.]\n\n"
-                f"ПИТАННЯ:\n{text}"
-            )
-        else:
-            llm_user_text = (
-                f"[СИСТЕМА: {_prod_ctx}{_obj_ctx}"
-                f"Дай 3-5 НОВИХ конкретних аргументів або готових фраз менеджера. "
-                f"{_avoid_hint}"
-                f"ФОРМАТ: тільки готові фрази/аргументи — БЕЗ нумерованих секцій (1️⃣2️⃣3️⃣), БЕЗ повного 7-секційного розбору. "
-                f"Максимум 8 рядків. НЕ починай з нуля.]\n\n"
-                f"ПИТАННЯ:\n{text}"
-            )
-    else:
-        llm_user_text = text
+    # LLM отримує чистий запит — всі інструкції у sub-prompt через classifier
+    llm_user_text = text
+
+    # Тільки мінімальна підказка продукту якщо classifier визначив, щоб LLM точно зрозумів контекст
+    if _classifier_result and _product_canonical_for_rag:
+        llm_user_text = f"[Продукт: {_product_canonical_for_rag}]\n\nПИТАННЯ:\n{text}"
 
     # --- Вибір sub-prompt для coach через classifier ---
     if mode_key == "coach":
