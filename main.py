@@ -1931,6 +1931,21 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
     answer = answer.replace("  ", " ")
     # Fix **bold** → *bold* (Telegram doesn't render double asterisks)
     answer = re.sub(r'\*\*(.+?)\*\*', r'*\1*', answer)
+    # Видалити legacy-секцію "Коротка готова фраза менеджера" якщо з'явилась зверху —
+    # вона не має бути в новому форматі (це дубль killer phrase)
+    answer = re.sub(
+        r'^\s*(?:💬\s*)?\*?Коротка готова фраза менеджера[^\n]*[:\*]?\s*\n+«[^»]*»\s*\n+',
+        '',
+        answer,
+        flags=re.MULTILINE
+    )
+    answer = re.sub(
+        r'^\s*(?:💬\s*)?\*?Готова фраза менеджера[^\n]*[:\*]?\s*\n+«[^»]*»\s*\n+',
+        '',
+        answer,
+        flags=re.MULTILINE
+    )
+    answer = answer.strip()
 
     # Validator: перевіряємо відповідь для verbatim/low-confidence інтентів
     try:
