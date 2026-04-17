@@ -1743,11 +1743,11 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
             "info": PROMPT_COACH_INFO,
         }
 
-        # VERBATIM mode — критичні фактичні запити (protocol/composition/contraindication)
+        # VERBATIM mode — критичні фактичні запити (protocol/composition/contraindication/combo)
         _needs_verbatim = _classifier_result and _classifier_result.get("needs_verbatim", False)
-        if _needs_verbatim and _coach_subtype in ("info",):
+        if _needs_verbatim and _coach_subtype in ("info", "combo"):
             _system_prompt = PROMPT_COACH_BASE + "\n\n" + PROMPT_COACH_VERBATIM
-            logger.info("VERBATIM mode for intent=%s", _intent)
+            logger.info("VERBATIM mode for intent=%s subtype=%s", _intent, _coach_subtype)
         else:
             _system_prompt = PROMPT_COACH_BASE + "\n\n" + _COACH_PROMPT_MAP.get(_coach_subtype, PROMPT_COACH_INFO)
 

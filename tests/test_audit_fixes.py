@@ -85,6 +85,38 @@ TESTS = [
         "check_intent": "evaluate_my_answer",
         "answer_must_have": ["/10"],
     },
+    # Fix 4: Missing clinical intents
+    {
+        "name": "Clinical no result",
+        "query": "Petaran не дає вираженого ліфтинг ефекту",
+        "check_intent": "clinical_no_result",
+    },
+    {
+        "name": "Clinical long recovery",
+        "query": "після Petaran тривалий реабілітаційний період",
+        "check_intent": "clinical_long_recovery",
+    },
+    {
+        "name": "Objection doubt",
+        "query": "не вірю в ефективність Exoxe",
+        "check_intent": "objection_doubt",
+    },
+    {
+        "name": "Objection no need",
+        "query": "косметолог не хоче купувати IUSE SB",
+        "check_intent": "objection_no_need",
+    },
+    # Regression: source_question
+    {
+        "name": "Source question RU",
+        "query": "из какого документа эта информация?",
+        "check_intent": "source_question",
+    },
+    {
+        "name": "Source question UA",
+        "query": "з якого джерела ця інформація?",
+        "check_intent": "source_question",
+    },
 ]
 
 
