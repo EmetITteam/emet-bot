@@ -1786,7 +1786,23 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
             context, sources = await loop.run_in_executor(None, get_context, search_query, mode_key, "openai", _has_comp, _product_canonical_for_rag)
             if not context.strip():
                 _context_was_empty = True
-            # Step 1: extract facts для SOS/скрипт (паралельно не можна — потребує context)
+            # Pre-filter: для price objection без згадки конкурента — видаляємо конкурентів з контексту
+            # щоб GPT фізично не бачив "Rejuran 1-2%" і не вставляв у відповідь
+            _intent_for_filter = _classifier_result.get("intent", "") if _classifier_result else ""
+            _competitor_in_query = _classifier_result.get("competitor") if _classifier_result else None
+            if _intent_for_filter in ("objection_price", "objection_no_need") and not _competitor_in_query:
+                _COMPETITOR_NAMES_FILTER = [
+                    "rejuran", "реджуран", "sculptra", "скульптра", "juvederm", "ювідерм",
+                    "radiesse", "радіесс", "plinest", "плінест", "nucleofill", "нуклеофіл",
+                    "aesthefill", "естефіл", "gouri", "гурі", "juvelook", "profhilo",
+                ]
+                _filtered_lines = []
+                for line in context.split("\n"):
+                    if not any(c in line.lower() for c in _COMPETITOR_NAMES_FILTER):
+                        _filtered_lines.append(line)
+                context = "\n".join(_filtered_lines)
+
+            # Step 1: extract facts
             _llm_context = context
             if _needs_extract and context.strip():
                 _extracted = await extract_coaching_facts(context, text)
