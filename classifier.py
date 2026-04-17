@@ -53,7 +53,8 @@ INTENTS = {
     "objection_no_need": "Лікар каже що не потрібно, не цікаво, не актуально",
     "objection_grey_market": "Лікар посилається на сірий ринок (дешевше неофіційно)",
 
-    # B: Клінічні скарги
+    # B: Клінічні
+    "clinical_why": "Позитивне клінічне питання 'чому безболісний', 'чому менш болючий', 'за рахунок чого працює' — коротка відповідь про механізм, НЕ повний INFO огляд 8 секцій",
     "clinical_side_effect": "Скарга на побічний ефект — пече, болить, набряк, папули, почервоніння, ускладнення",
     "clinical_no_result": "Скарга що не бачить результату, інші препарати дають кращий ефект",
     "clinical_long_recovery": "Тривала реабілітація після процедури",
@@ -76,6 +77,9 @@ INTENTS = {
     # E: Композиція
     "combo_with_product": "Комбо-протоколи з конкретним препаратом (комбо з Petaran)",
     "combo_for_indication": "Комбо/протоколи для показання (протоколи для пігментації)",
+
+    # F: Мета-запити
+    "source_question": "Менеджер питає З ЯКОГО ДОКУМЕНТА / ДЖЕРЕЛА бот взяв інформацію ('из какого документа', 'откуда инфо', 'з якого джерела')",
 
     # Спецвипадки
     "unclear_no_product": "Заперечення без згаданого продукту, без контексту попередніх повідомлень",
@@ -155,7 +159,8 @@ i, iII, Whitening, Tox, Skin Healer
 ## ПРАВИЛА ВИЗНАЧЕННЯ INTENT:
 
 **Клінічні (categorize them correctly, NOT as objection):**
-- "чому пече/болить/набряк" → clinical_side_effect (НЕ objection!)
+- "чому пече/болить/набряк" → clinical_side_effect (НЕ objection! скарга/побічка)
+- "чому безболісний / менш болючий / за рахунок чого працює" → clinical_why (ПОЗИТИВНЕ питання, не скарга)
 - "не бачу результату" → clinical_no_result
 - "можна при вагітності" → clinical_contraindication
 
@@ -172,6 +177,11 @@ i, iII, Whitening, Tox, Skin Healer
   (виправлення бота — менеджер каже що бот помилився)
 - "готуюсь до візиту" → visit_prep
 - "дай скрипт" → script_request
+
+**Мета-запити:**
+- "из какого документа" / "з якого джерела" / "откуда информация" / "какой источник" → source_question
+  ⚠️ УВАГА: "из какого документа" це НЕ evaluate_my_answer! Це НЕ correction!
+  Це питання про ДЖЕРЕЛО попередньої відповіді бота.
 
 **Важливо розрізняти:**
 - "Ellanse пече" → clinical_side_effect (скарга)
@@ -471,7 +481,8 @@ INTENT_TO_COACH_SUBTYPE = {
     "objection_no_need": "sos",
     "objection_grey_market": "sos",
 
-    # Clinical — поки всі в SOS з клінічним блоком
+    # Clinical
+    "clinical_why": "sos",  # short clinical answer via SOS clinical block
     "clinical_side_effect": "sos",
     "clinical_no_result": "sos",
     "clinical_long_recovery": "sos",
@@ -494,6 +505,9 @@ INTENT_TO_COACH_SUBTYPE = {
     # Combo — окремий режим (PROMPT_COMBO з prompts.py)
     "combo_with_product": "combo",
     "combo_for_indication": "combo",
+
+    # Мета
+    "source_question": "source",
 
     # Спец
     "unclear_no_product": "ask_product",

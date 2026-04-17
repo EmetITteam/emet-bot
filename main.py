@@ -1361,7 +1361,22 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
         )
 
         # Маппінг intent → mode_key
-        if _intent in ("combo_with_product", "combo_for_indication"):
+        if _intent == "source_question":
+            # Мета-запит: "из какого документа" — показуємо source з останньої відповіді
+            _last_sources = state_data.get("last_rag_sources", [])
+            if _last_sources:
+                _src_list = "\n".join(f"📄 {s}" for s in _last_sources[:5])
+                await message.answer(
+                    f"Інформація в попередній відповіді була з таких джерел:\n\n{_src_list}",
+                    parse_mode="Markdown"
+                )
+            else:
+                await message.answer(
+                    "На жаль, інформація про джерело попередньої відповіді не збережена. "
+                    "Задайте запит по продукту ще раз — я вкажу джерело.",
+                )
+            return
+        elif _intent in ("combo_with_product", "combo_for_indication"):
             mode_key = "combo"
         elif _intent in ("greeting", "out_of_scope"):
             mode_key = "kb"
@@ -1980,6 +1995,10 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
     _uname = message.from_user.username or f"id{message.from_user.id}"
     _has_source = bool(sources) and not _context_was_empty
     _log_id = log_to_db(message.from_user.id, _uname, mode_key, ai_used, text, answer, _has_source, _model_used, _tokens_in, _tokens_out)
+
+    # Зберігаємо RAG sources для відповіді на "з якого документа"
+    _source_names = list(set(s.get("name", "?") for s in sources.values())) if sources else []
+    await state.update_data(last_rag_sources=_source_names[:10])
 
     # Зберігаємо історію діалогу для всіх режимів
     # coach: 3 обміни (6 повідомлень), решта: 2 обміни (4 повідомлення)
