@@ -161,6 +161,21 @@ RAG_K_PRODUCTS         = 12    # chunks from products index (our data)
 RAG_K_COMPETITORS      = 8     # chunks from competitors index (comparisons + products like ESSE)
 RAG_K_DEFAULT          = 15    # chunks for kb/cases/operational
 RAG_K_COMBO            = 15    # chunks for combo with category filter
+
+# Dynamic chunk counts per intent type — менше для простих, більше для складних
+RAG_K_BY_INTENT = {
+    "info_composition": 6,      # склад — 2-3 чанки достатньо
+    "info_storage": 4,          # зберігання — 1-2 чанки
+    "info_indications": 6,      # показання — 3-4 чанки
+    "clinical_contraindication": 6,  # протипоказання — точковий пошук
+    "correction": 4,            # виправлення — мінімум
+    "clinical_why": 6,          # чому безболюче — точковий
+    # Складні — повний обсяг (12 default)
+    "objection_price": 10,
+    "objection_competitor": 12,
+    "info_comparison": 12,
+    "script_request": 10,
+}
 LLM_TIMEOUT            = 60    # seconds timeout for all LLM API calls
 LLM_INTENT_MAX_TOKENS  = 10    # detect_intent classifier output
 LLM_QUERY_MAX_TOKENS   = 60    # prepare_search_query output
@@ -1010,7 +1025,7 @@ def _search_with_score(vdb, query, k, threshold=RAG_SCORE_THRESHOLD):
         return vdb.similarity_search(query, k=k)
 
 
-def get_context(query: str, mode: str = "kb", provider: str = "openai", has_competitor: bool = False, product_canonical: str | None = None) -> tuple[str, dict]:
+def get_context(query: str, mode: str = "kb", provider: str = "openai", has_competitor: bool = False, product_canonical: str | None = None, rag_k_override: int | None = None) -> tuple[str, dict]:
     """
     3-zone RAG search.
     product_canonical: якщо передано — фільтр чанків по metadata (product-locked retrieval).
@@ -1036,7 +1051,8 @@ def get_context(query: str, mode: str = "kb", provider: str = "openai", has_comp
 
     if product_canonical:
         # PRODUCT-LOCKED: фільтруємо чанки тільки про цей продукт
-        docs_ours = _search_with_product_filter(vdb_products, normalized_query, RAG_K_PRODUCTS, product_canonical)
+        _k = rag_k_override or RAG_K_PRODUCTS
+        docs_ours = _search_with_product_filter(vdb_products, normalized_query, _k, product_canonical)
         # Для конкурентів продуктовий фільтр не застосовуємо (конкурентні чанки не мають product_canonical нашого продукту)
         docs_comp = _search_with_score(vdb_competitors, normalized_query, RAG_K_COMPETITORS) if has_competitor else []
         return _extract_docs(docs_ours + docs_comp)
@@ -1120,6 +1136,81 @@ def get_combo_synergy_context(product_a: str, product_b: str | None, provider: s
             parts.append(f"ЕФЕКТИ {product_b}:\n{effects_b}")
 
     return "\n\n".join(parts)
+
+
+def build_search_query_from_classifier(text: str, classifier_result: dict | None) -> str:
+    """
+    Будує search query для RAG на основі classifier output.
+    Замінює legacy 150-рядковий keyword enrichment + prepare_search_query LLM call.
+    """
+    if not classifier_result:
+        return text
+
+    product = normalize_product(
+        classifier_result.get("primary_product"),
+        classifier_result.get("product_variant")
+    )
+    secondary = classifier_result.get("secondary_product")
+    competitor = classifier_result.get("competitor")
+    intent = classifier_result.get("intent", "info_about_product")
+    keywords = product_search_keywords(
+        classifier_result.get("primary_product"),
+        classifier_result.get("product_variant")
+    )
+
+    parts = []
+
+    # Product name — завжди включаємо якщо є
+    if product:
+        parts.append(product)
+
+    # Intent-based keywords
+    if intent in ("objection_price", "objection_no_need"):
+        parts.extend(["переваги", "маржа", "економіка", "ефект"])
+    elif intent in ("objection_competitor",) and competitor:
+        parts.extend([competitor, "порівняння", "відмінність", "аргументи"])
+    elif intent == "objection_grey_market":
+        parts.extend(["сірий ринок", "сертифікат", "безпека", "ризик"])
+    elif intent == "objection_doubt":
+        parts.extend(["ефективність", "дослідження", "клінічні"])
+    elif intent in ("clinical_side_effect", "clinical_why"):
+        parts.extend(["побічні", "біль", "печіння", "механізм", "компоненти"])
+    elif intent == "clinical_no_result":
+        parts.extend(["результат", "ефект", "протокол", "курс", "терміни"])
+    elif intent == "clinical_long_recovery":
+        parts.extend(["реабілітація", "набряк", "відновлення"])
+    elif intent == "clinical_contraindication":
+        parts.extend(["протипоказання", "вагітність", "поєднання", "безпека"])
+    elif intent == "info_protocol":
+        parts.extend(["протокол", "процедур", "інтервал", "курс"])
+    elif intent == "info_composition":
+        parts.extend(["склад", "концентрація", "компоненти"])
+    elif intent == "info_storage":
+        parts.extend(["зберігання", "температура", "термін"])
+    elif intent == "info_comparison":
+        if secondary:
+            parts.append(secondary)
+        parts.extend(["порівняння", "відмінність"])
+    elif intent == "info_indications":
+        parts.extend(["показання", "пацієнт", "для кого"])
+    elif intent in ("combo_with_product", "combo_for_indication"):
+        if secondary:
+            parts.append(secondary)
+        parts.extend(["комбо", "протокол", "поєднання", "інтервал"])
+    elif intent == "script_request":
+        parts.extend(["скрипт", "діалог", "аргументи", "заперечення"])
+    elif intent == "visit_prep":
+        parts.extend(["візит", "підготовка", "лікар"])
+
+    # Product-specific search hints
+    if keywords:
+        parts.extend(keywords[:3])
+
+    # Оригінальний текст (коротка частина)
+    text_short = " ".join(text.split()[:10])
+    parts.append(text_short)
+
+    return " ".join(dict.fromkeys(parts))  # deduplicate, keep order
 
 
 def filter_competitor_lines(context: str, classifier_result: dict | None) -> str:
@@ -1525,8 +1616,11 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
             )
         return
 
-    # Якщо detect_intent + prepare_search_query вже виконались паралельно — беремо готовий результат
-    search_query = _search_query_ready if _search_query_ready is not None else await prepare_search_query(text)
+    # Search query з classifier (замість legacy 150-рядкового keyword enrichment)
+    if _classifier_result and _classifier_result.get("confidence", 0) >= 0.5:
+        search_query = build_search_query_from_classifier(text, _classifier_result)
+    else:
+        search_query = _search_query_ready if _search_query_ready is not None else await prepare_search_query(text)
 
     # --- Python-level детекция продукта + возражения (чтобы LLM не переспрашивал) ---
     # IMPORTANT: longer keys MUST come before shorter ones (e.g. "iuse hair" before "iuse")
@@ -1758,6 +1852,11 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
             _classifier_result.get("primary_product"),
             _classifier_result.get("product_variant")
         )
+    # Follow-up: якщо classifier не визначив продукт — беремо з попереднього запиту
+    if not _product_canonical_for_rag and chat_history:
+        _product_canonical_for_rag = state_data.get("last_product_canonical")
+        if _product_canonical_for_rag:
+            logger.info("Follow-up: using product=%s from previous query", _product_canonical_for_rag)
 
     # LLM отримує чистий запит — всі інструкції у sub-prompt через classifier
     llm_user_text = text
@@ -1803,7 +1902,18 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
         await state.update_data(last_coach_type=_coach_subtype)
 
         # Extract facts — для всіх окрім feedback (виправлення) і greeting
-        _needs_extract = _coach_subtype not in ("feedback",)
+        # Extract facts: пропускаємо для простих/verbatim запитів (економія 1-2 сек)
+        _SKIP_EXTRACT_INTENTS = {
+            "info_composition", "info_storage", "info_indications",  # прості факти — verbatim достатньо
+            "clinical_contraindication",  # протипоказання — verbatim цитата
+            "correction",  # виправлення — не потрібен extract
+            "source_question",  # джерело — не потрібен
+        }
+        _needs_extract = (
+            _coach_subtype not in ("feedback",)
+            and not _needs_verbatim
+            and _intent not in _SKIP_EXTRACT_INTENTS
+        )
 
         _is_type_c = (_coach_subtype == "feedback")
     else:
@@ -1831,7 +1941,8 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
             loop = asyncio.get_running_loop()
             _model = MODEL_OPENAI_COACH if mode_key in ("coach", "combo") else MODEL_OPENAI
             _has_comp = bool(_classifier_result and _classifier_result.get("competitor")) or bool(_detected_competitor)
-            context, sources = await loop.run_in_executor(None, get_context, search_query, mode_key, "openai", _has_comp, _product_canonical_for_rag)
+            _rag_k = RAG_K_BY_INTENT.get(_intent, None) if (_classifier_result and mode_key == "coach") else None
+            context, sources = await loop.run_in_executor(None, get_context, search_query, mode_key, "openai", _has_comp, _product_canonical_for_rag, _rag_k)
             if not context.strip():
                 _context_was_empty = True
             context = filter_competitor_lines(context, _classifier_result)
@@ -1928,7 +2039,8 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
         try:
             loop = asyncio.get_running_loop()
             _has_comp_g = bool(_classifier_result and _classifier_result.get("competitor")) or bool(_detected_competitor)
-            context, sources = await loop.run_in_executor(None, get_context, search_query, mode_key, "google", _has_comp_g, _product_canonical_for_rag)
+            _rag_k_g = RAG_K_BY_INTENT.get(_intent, None) if (_classifier_result and mode_key == "coach") else None
+            context, sources = await loop.run_in_executor(None, get_context, search_query, mode_key, "google", _has_comp_g, _product_canonical_for_rag, _rag_k_g)
             # Structured chat for Gemini — separate system, history, and user turns
             gemini_contents = [{"role": "user", "parts": [{"text": _system_prompt}]},
                                {"role": "model", "parts": [{"text": "Зрозуміло, працюю за інструкціями."}]}]
@@ -1961,7 +2073,8 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
         try:
             loop = asyncio.get_running_loop()
             _has_comp = bool(_classifier_result and _classifier_result.get("competitor")) or bool(_detected_competitor)
-            context, sources = await loop.run_in_executor(None, get_context, search_query, mode_key, "openai", _has_comp, _product_canonical_for_rag)
+            _rag_k = RAG_K_BY_INTENT.get(_intent, None) if (_classifier_result and mode_key == "coach") else None
+            context, sources = await loop.run_in_executor(None, get_context, search_query, mode_key, "openai", _has_comp, _product_canonical_for_rag, _rag_k)
             claude_msg = await client_claude.messages.create(
                 model=MODEL_CLAUDE,
                 max_tokens=LLM_CLAUDE_MAX_TOKENS,
@@ -2058,6 +2171,9 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
     # Зберігаємо RAG sources для відповіді на "з якого документа"
     _source_names = list(set(s.get("name", "?") for s in sources.values())) if sources else []
     await state.update_data(last_rag_sources=_source_names[:10])
+    # Зберігаємо продукт для follow-up
+    if _product_canonical_for_rag:
+        await state.update_data(last_product_canonical=_product_canonical_for_rag)
 
     # Зберігаємо історію діалогу для всіх режимів
     # coach: 3 обміни (6 повідомлень), решта: 2 обміни (4 повідомлення)
