@@ -247,7 +247,7 @@ def _split_coach_to_products_competitors():
         for line in text.split("\n"):
             s = line.strip()
             if s and not s.startswith("#"):
-                return len(text.strip()) >= 80  # мінімум 80 символів реального контенту
+                return len(text.strip()) >= 250  # мінімум 250 символів реального контенту
         return False
 
     products = [d for d in products if _has_real_content(d)]
@@ -267,9 +267,9 @@ def _split_coach_to_products_competitors():
             return "HP Cell Vitaran Tox Eye"
         if any(k in combined for k in ["skin healer", "скін хілер"]):
             return "Vitaran Skin Healer"
-        if any(k in combined for k in ["vitaran iii", "vitaran_iii"]):
+        if any(k in combined for k in ["vitaran iii", "vitaran_iii", "vitaran ii", "vitaran_ii"]):
             return "HP Cell Vitaran iII"
-        if any(k in combined for k in ["vitaran i ", "vitaran_i", "hp cell vitaran i", "hp cell vitaran_i"]):
+        if any(k in combined for k in ["vitaran i ", "vitaran i\n", "vitaran_i", "hp cell vitaran i", "vitaran i.", "vitaran i,"]):
             return "HP Cell Vitaran i"
         if any(k in combined for k in ["vitaran", "вітаран", "витаран", "hp cell"]):
             return "Vitaran"

@@ -1010,7 +1010,7 @@ def _search_with_score(vdb, query, k, threshold=RAG_SCORE_THRESHOLD):
         return vdb.similarity_search(query, k=k)
 
 
-def get_context(query, mode="kb", provider="openai", has_competitor=False, product_canonical=None):
+def get_context(query: str, mode: str = "kb", provider: str = "openai", has_competitor: bool = False, product_canonical: str | None = None) -> tuple[str, dict]:
     """
     3-zone RAG search.
     product_canonical: якщо передано — фільтр чанків по metadata (product-locked retrieval).
@@ -1086,6 +1086,28 @@ def _search_with_product_filter(vdb, query, k, product_canonical):
     except Exception as e:
         logger.error("RAG product-locked failed: %s, fallback", e)
         return vdb.similarity_search(query, k=k)
+
+
+_COMPETITOR_NAMES_FILTER = [
+    "rejuran", "реджуран", "sculptra", "скульптра", "juvederm", "ювідерм",
+    "radiesse", "радіесс", "plinest", "плінест", "nucleofill", "нуклеофіл",
+    "aesthefill", "естефіл", "gouri", "гурі", "juvelook", "profhilo",
+    "mastelli", "мастеллі", "cellular matrix", "benev",
+]
+
+
+def filter_competitor_lines(context: str, classifier_result: dict | None) -> str:
+    """Видаляє рядки з конкурентами з RAG контексту для price/no_need objections."""
+    if not classifier_result:
+        return context
+    intent = classifier_result.get("intent", "")
+    has_competitor = classifier_result.get("competitor")
+    if intent not in ("objection_price", "objection_no_need") or has_competitor:
+        return context
+    return "\n".join(
+        line for line in context.split("\n")
+        if not any(c in line.lower() for c in _COMPETITOR_NAMES_FILTER)
+    )
 
 
 async def extract_coaching_facts(context: str, user_query: str) -> str:
@@ -1786,21 +1808,7 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
             context, sources = await loop.run_in_executor(None, get_context, search_query, mode_key, "openai", _has_comp, _product_canonical_for_rag)
             if not context.strip():
                 _context_was_empty = True
-            # Pre-filter: для price objection без згадки конкурента — видаляємо конкурентів з контексту
-            # щоб GPT фізично не бачив "Rejuran 1-2%" і не вставляв у відповідь
-            _intent_for_filter = _classifier_result.get("intent", "") if _classifier_result else ""
-            _competitor_in_query = _classifier_result.get("competitor") if _classifier_result else None
-            if _intent_for_filter in ("objection_price", "objection_no_need") and not _competitor_in_query:
-                _COMPETITOR_NAMES_FILTER = [
-                    "rejuran", "реджуран", "sculptra", "скульптра", "juvederm", "ювідерм",
-                    "radiesse", "радіесс", "plinest", "плінест", "nucleofill", "нуклеофіл",
-                    "aesthefill", "естефіл", "gouri", "гурі", "juvelook", "profhilo",
-                ]
-                _filtered_lines = []
-                for line in context.split("\n"):
-                    if not any(c in line.lower() for c in _COMPETITOR_NAMES_FILTER):
-                        _filtered_lines.append(line)
-                context = "\n".join(_filtered_lines)
+            context = filter_competitor_lines(context, _classifier_result)
 
             # Step 1: extract facts
             _llm_context = context
