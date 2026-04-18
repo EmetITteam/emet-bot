@@ -1096,6 +1096,32 @@ _COMPETITOR_NAMES_FILTER = [
 ]
 
 
+def get_combo_synergy_context(product_a: str, product_b: str | None, provider: str = "openai") -> str:
+    """
+    Отримує ефекти КОЖНОГО препарату окремо для синтезу синергії.
+    Повертає додатковий контекст з ефектами обох продуктів.
+    """
+    if not product_a:
+        return ""
+    vdb = _get_vdb("products", provider)
+    parts = []
+
+    # Product A — ефекти та механізм
+    docs_a = _search_with_product_filter(vdb, f"{product_a} ефект механізм дія переваги показання", 6, product_a)
+    if docs_a:
+        effects_a = "\n".join(d.page_content[:400] for d in docs_a[:3])
+        parts.append(f"ЕФЕКТИ {product_a}:\n{effects_a}")
+
+    # Product B — ефекти та механізм
+    if product_b and product_b != product_a:
+        docs_b = _search_with_product_filter(vdb, f"{product_b} ефект механізм дія переваги показання", 6, product_b)
+        if docs_b:
+            effects_b = "\n".join(d.page_content[:400] for d in docs_b[:3])
+            parts.append(f"ЕФЕКТИ {product_b}:\n{effects_b}")
+
+    return "\n\n".join(parts)
+
+
 def filter_competitor_lines(context: str, classifier_result: dict | None) -> str:
     """Видаляє рядки з конкурентами з RAG контексту для price/no_need objections."""
     if not classifier_result:
@@ -1809,6 +1835,15 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
             if not context.strip():
                 _context_was_empty = True
             context = filter_competitor_lines(context, _classifier_result)
+
+            # Combo synergy: додаємо ефекти кожного продукту для синтезу "що дає ця комбінація"
+            if mode_key == "combo" and _classifier_result:
+                _prod_a = normalize_product(_classifier_result.get("primary_product"), _classifier_result.get("product_variant"))
+                _prod_b = _classifier_result.get("secondary_product")
+                if _prod_a:
+                    _synergy_ctx = await loop.run_in_executor(None, get_combo_synergy_context, _prod_a, _prod_b, "openai")
+                    if _synergy_ctx:
+                        context = f"ЕФЕКТИ ПРОДУКТІВ ДЛЯ СИНЕРГІЇ:\n{_synergy_ctx}\n\n{context}"
 
             # Step 1: extract facts
             _llm_context = context
