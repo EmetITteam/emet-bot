@@ -24,9 +24,32 @@ import shutil
 import threading
 import base64
 import json as _json
+import logging
+import urllib.request
+import urllib.parse
 import db
 import pandas as pd
 from datetime import datetime
+
+logger = logging.getLogger("emet_sync")
+
+
+def _notify_admin(text: str):
+    """Telegram-сповіщення адміну при критичних подіях sync. Не падає при помилці."""
+    token = os.getenv("TELEGRAM_TOKEN")
+    admin_id = os.getenv("ADMIN_ID")
+    if not token or not admin_id:
+        return
+    try:
+        data = urllib.parse.urlencode({"chat_id": admin_id, "text": text[:4000]}).encode()
+        req = urllib.request.Request(
+            f"https://api.telegram.org/bot{token}/sendMessage",
+            data=data,
+            method="POST"
+        )
+        urllib.request.urlopen(req, timeout=10)
+    except Exception as e:
+        logger.error(f"_notify_admin failed: {e}")
 
 from pypdf import PdfReader
 from docx import Document as DocxDocument
@@ -309,21 +332,45 @@ def _split_coach_to_products_competitors():
     print(f"  [split] products by canonical: {dict(prod_dist.most_common())}")
 
     # Rebuild both indices
+    counts = {}
     for path, docs, label in [(products_dir, products, "products"), (competitors_dir, competitors, "competitors")]:
         shutil.rmtree(path, ignore_errors=True)
         vdb = _Chroma(persist_directory=path, embedding_function=emb)
         BATCH = 50
         for i in range(0, len(docs), BATCH):
             _batch_to_chroma_simple(docs[i:i+BATCH], emb, vdb)
-        print(f"  [split] {label}: {vdb._collection.count()} chunks")
+        cnt = vdb._collection.count()
+        counts[label] = cnt
+        print(f"  [split] {label}: {cnt} chunks")
+
+    # Sanity check: обидва індекси не повинні бути <100 чанків — це ознака провалу embedding
+    SPLIT_MIN_CHUNKS = 100
+    if counts.get("products", 0) < SPLIT_MIN_CHUNKS or counts.get("competitors", 0) < SPLIT_MIN_CHUNKS:
+        msg = (f"SPLIT FAILED: products={counts.get('products', 0)} chunks, "
+               f"competitors={counts.get('competitors', 0)} chunks (min {SPLIT_MIN_CHUNKS}). "
+               f"Likely OpenAI rate limit or API failure during embedding.")
+        logger.error(msg)
+        _notify_admin(f"⚠️ EMET sync: {msg}")
+        raise RuntimeError(msg)
 
 
-def _batch_to_chroma_simple(docs, emb, vdb):
-    """Simple batch add without rate-limit handling."""
-    try:
-        vdb.add_documents(docs)
-    except Exception as e:
-        print(f"  [split batch] error: {e}")
+def _batch_to_chroma_simple(docs, emb, vdb, rate_limit_sleep=10, max_retries=10):
+    """Batch add з retry на rate-limit. Кидає виняток коли retries вичерпані."""
+    rate_limit_keys = ["429", "RateLimitError", "rate_limit", "RESOURCE_EXHAUSTED"]
+    retries = 0
+    while True:
+        try:
+            vdb.add_documents(docs)
+            return
+        except Exception as e:
+            err = str(e)
+            if any(k in err for k in rate_limit_keys) and retries < max_retries:
+                retries += 1
+                logger.warning(f"  [split batch] rate limit, sleep {rate_limit_sleep}s (retry {retries}/{max_retries})")
+                time.sleep(rate_limit_sleep)
+            else:
+                logger.error(f"  [split batch] failed after {retries} retries: {err[:200]}")
+                raise
 
 
 # ─── Построение индексов ──────────────────────────────────────────────────────
@@ -471,18 +518,20 @@ def sync_rag_indexes():
         if folder_label == "coach":
             try:
                 _split_coach_to_products_competitors()
-                # Verify integrity after split
                 try:
                     from tests.test_knowledge_integrity import run_integrity_check
                     passed, report = run_integrity_check(verbose=False)
                     if passed:
                         print("  [integrity] OK — zero data loss")
                     else:
-                        print(f"  [integrity] FAILED!\n{report}")
+                        logger.error(f"  [integrity] FAILED!\n{report}")
+                        _notify_admin(f"⚠️ EMET sync: integrity check FAILED after split.\n{report[:3500]}")
                 except Exception as e:
-                    print(f"  [integrity] check error: {e}")
+                    logger.error(f"  [integrity] check error: {e}")
+                    _notify_admin(f"⚠️ EMET sync: integrity check crashed: {e}")
             except Exception as e:
-                print(f"  [split] помилка: {e}")
+                logger.error(f"  [split] помилка: {e}")
+                _notify_admin(f"⚠️ EMET sync: split failed: {e}")
 
     # ── 2. Certs — тільки sync_state, без RAG-індексу ────────────────────────
     if CERTS_FOLDER_ID:
