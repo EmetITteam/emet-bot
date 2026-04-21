@@ -1916,6 +1916,11 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
         )
 
         _is_type_c = (_coach_subtype == "feedback")
+    elif mode_key == "combo":
+        # Combo: PROMPT_COMBO + BASE правила (заборони, виправлення даних, позиціонування)
+        _system_prompt = PROMPT_COACH_BASE + "\n\n" + SYSTEM_PROMPTS["combo"]
+        _needs_extract = False
+        _is_type_c = False
     else:
         _system_prompt = SYSTEM_PROMPTS[mode_key]
         _needs_extract = False
