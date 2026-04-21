@@ -11,7 +11,11 @@ Or via bot: auto-scheduled daily at 8:00 AM
 import os, sys, json, re, random, textwrap
 from datetime import datetime, timedelta
 
-sys.stdout = __import__('io').TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
+# UTF-8 для Windows-терміналу. reconfigure безпечний при повторному виклику.
+try:
+    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+except (AttributeError, ValueError):
+    pass
 os.chdir(os.path.dirname(os.path.abspath(__file__)))
 from dotenv import load_dotenv
 load_dotenv()

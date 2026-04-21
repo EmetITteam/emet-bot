@@ -10,7 +10,11 @@ Run after ANY index change:
 Also runs automatically in sync_manager after each rebuild.
 """
 import os, sys
-sys.stdout = __import__('io').TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
+# UTF-8 для Windows-терміналу. reconfigure безпечний при повторному виклику (на відміну від обгортки TextIOWrapper).
+try:
+    sys.stdout.reconfigure(encoding='utf-8', errors='replace')
+except (AttributeError, ValueError):
+    pass
 os.chdir(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from dotenv import load_dotenv
 load_dotenv()
