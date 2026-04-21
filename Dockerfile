@@ -4,6 +4,10 @@ FROM python:3.11-slim
 # Устанавливаем рабочую директорию
 WORKDIR /app
 
+# procps — для pgrep у healthcheck (не входить у python:slim)
+RUN apt-get update && apt-get install -y --no-install-recommends procps \
+    && rm -rf /var/lib/apt/lists/*
+
 # Копируем зависимости
 COPY requirements.txt .
 

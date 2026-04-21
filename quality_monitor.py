@@ -8,7 +8,7 @@ Analyses dialogs from the last 24 hours with two perspectives:
 Run: docker exec emet_bot_app python /app/quality_monitor.py
 Or via bot: auto-scheduled daily at 8:00 AM
 """
-import os, sys, json, re, textwrap
+import os, sys, json, re, random, textwrap
 from datetime import datetime, timedelta
 
 sys.stdout = __import__('io').TextIOWrapper(sys.stdout.buffer, encoding='utf-8', errors='replace')
@@ -22,6 +22,8 @@ import db
 
 OPENAI_KEY = os.getenv("OPENAI_API_KEY")
 HOURS_BACK = int(os.getenv("MONITOR_HOURS", "24"))
+LLM_JUDGE_SAMPLE = int(os.getenv("MONITOR_LLM_SAMPLE", "10"))  # 0 = disable
+LLM_JUDGE_MODEL = os.getenv("MONITOR_LLM_MODEL", "gpt-4o-mini")
 
 # Known bad patterns — expand as new issues are found
 BAD_PATTERNS = {
@@ -178,7 +180,7 @@ def detect_contradictions(dialogs):
     return contradictions
 
 
-def build_report(dialogs, findings):
+def build_report(dialogs, findings, llm_summary=None):
     """Build structured report text."""
     # Stats
     total = len(dialogs)
@@ -257,6 +259,21 @@ def build_report(dialogs, findings):
             lines.append(f"  #{f['dialog_id']}: {f['description']}")
         lines.append("")
 
+    # LLM judge — semantic evaluation
+    if llm_summary:
+        lines.append(f"*LLM judge ({llm_summary['n']} діалогів, {LLM_JUDGE_MODEL}):*")
+        lines.append(f"  Helpfulness:    {llm_summary['avg_helpfulness']}/10")
+        lines.append(f"  Factual:        {llm_summary['avg_factual']}/10")
+        lines.append(f"  Format:         {llm_summary['avg_format']}/10")
+        lines.append(f"  Role awareness: {llm_summary['avg_role']}/10")
+        if llm_summary["errors"]:
+            lines.append(f"  ⚠️ Judge errors: {llm_summary['errors']}")
+        if llm_summary["low_score"]:
+            lines.append(f"  Низькі бали ({len(llm_summary['low_score'])}):")
+            for r in llm_summary["low_score"][:3]:
+                lines.append(f"    #{r['dialog_id']} ({r.get('issue', '?')[:80]})")
+        lines.append("")
+
     # Recommendation
     if quality < 8:
         lines.append("*Рекомендації:*")
@@ -268,6 +285,77 @@ def build_report(dialogs, findings):
             lines.append("  - Додайте крос-сейл правила для пропущених показань.")
 
     return "\n".join(lines)
+
+
+# ── LLM judge ─────────────────────────────────────────────────────────────────
+
+JUDGE_PROMPT = """Ти — експерт з оцінки якості відповідей AI-помічника для менеджерів продажу косметичних препаратів EMET.
+
+Оціни 1 відповідь бота за 4 критеріями (1-10):
+1. helpfulness — чи відповідь реально допомагає менеджеру (а не просто заповнює простір шаблоном)
+2. factual_accuracy — чи факти/цифри/назви коректні (без галюцинацій, плутанини варіантів продуктів)
+3. format_compliance — чи дотриманий формат режиму (SOS-шаблон / INFO-секції / VERBATIM-цитування / FEEDBACK-визнання помилки)
+4. role_awareness — чи бот діє як коуч (аналізує запит менеджера, ставить уточнення, реагує на скаргу) vs тупо генерує шаблон без аналізу
+
+Також одне коротке речення з головною проблемою (або "OK" якщо все добре).
+
+Відповідь — виключно валідний JSON:
+{"helpfulness": <int>, "factual_accuracy": <int>, "format_compliance": <int>, "role_awareness": <int>, "issue": "<коротко>"}"""
+
+
+def _judge_one(dialog):
+    """Оцінка одного діалогу через LLM. Повертає dict зі score або {"error": "..."}."""
+    try:
+        from openai import OpenAI
+        client = OpenAI(api_key=OPENAI_KEY, timeout=30)
+        question = (dialog.get("question") or "")[:1500]
+        answer = (dialog.get("answer") or "")[:3000]
+        mode = dialog.get("mode", "?")
+        resp = client.chat.completions.create(
+            model=LLM_JUDGE_MODEL,
+            temperature=0.0,
+            max_tokens=300,
+            response_format={"type": "json_object"},
+            messages=[
+                {"role": "system", "content": JUDGE_PROMPT},
+                {"role": "user", "content": f"MODE: {mode}\n\nЗАПИТ:\n{question}\n\nВІДПОВІДЬ БОТА:\n{answer}"}
+            ]
+        )
+        return json.loads(resp.choices[0].message.content)
+    except Exception as e:
+        return {"error": str(e)[:120]}
+
+
+def llm_judge_sample(dialogs, sample_size=None):
+    """LLM-based semantic judge на випадковій вибірці діалогів."""
+    if sample_size is None:
+        sample_size = LLM_JUDGE_SAMPLE
+    if sample_size <= 0 or not dialogs:
+        return []
+    sample = random.sample(dialogs, min(sample_size, len(dialogs)))
+    results = []
+    for d in sample:
+        score = _judge_one(d)
+        results.append({"dialog_id": d["id"], "question": (d.get("question") or "")[:80], **score})
+    return results
+
+
+def _summarize_llm_scores(judge_results):
+    """Середні бали + список low-score діалогів."""
+    valid = [r for r in judge_results if "error" not in r]
+    if not valid:
+        return None
+    avg = lambda key: round(sum(r.get(key, 0) for r in valid) / len(valid), 1)
+    return {
+        "n": len(valid),
+        "errors": len(judge_results) - len(valid),
+        "avg_helpfulness": avg("helpfulness"),
+        "avg_factual": avg("factual_accuracy"),
+        "avg_format": avg("format_compliance"),
+        "avg_role": avg("role_awareness"),
+        "avg_total": avg("helpfulness") + avg("factual_accuracy") + avg("format_compliance") + avg("role_awareness"),
+        "low_score": [r for r in valid if min(r.get(k, 10) for k in ["helpfulness","factual_accuracy","format_compliance","role_awareness"]) <= 5],
+    }
 
 
 def run_monitor():
@@ -308,8 +396,20 @@ def run_monitor():
     except Exception as e:
         print(f"Integrity check error: {e}")
 
+    # LLM judge на випадковій вибірці
+    print(f"LLM judge: оцінка {min(LLM_JUDGE_SAMPLE, len(dialogs))} діалогів...")
+    judge_results = llm_judge_sample(dialogs)
+    llm_summary = _summarize_llm_scores(judge_results)
+    if llm_summary and llm_summary["low_score"]:
+        for r in llm_summary["low_score"]:
+            all_findings.append({
+                "type": "llm_low_score", "severity": "P1",
+                "description": f"LLM judge: {r.get('issue', 'low score')}",
+                "dialog_id": r["dialog_id"], "match": r["question"][:80],
+            })
+
     # Build report
-    report = build_report(dialogs, all_findings)
+    report = build_report(dialogs, all_findings, llm_summary)
     print("\n" + report)
 
     return report, all_findings
@@ -338,7 +438,17 @@ def run_monitor_safe():
     except Exception:
         pass
 
-    report = build_report(dialogs, all_findings)
+    judge_results = llm_judge_sample(dialogs)
+    llm_summary = _summarize_llm_scores(judge_results)
+    if llm_summary and llm_summary["low_score"]:
+        for r in llm_summary["low_score"]:
+            all_findings.append({
+                "type": "llm_low_score", "severity": "P1",
+                "description": f"LLM judge: {r.get('issue', 'low score')}",
+                "dialog_id": r["dialog_id"], "match": r["question"][:80],
+            })
+
+    report = build_report(dialogs, all_findings, llm_summary)
     return report, all_findings
 
 
