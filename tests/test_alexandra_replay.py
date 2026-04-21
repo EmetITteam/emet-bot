@@ -48,14 +48,31 @@ _TYPE_C_KEYWORDS = [
     "виправлення", "не так", "переплутав",
 ]
 
+_PRODUCTS_SHORT = ["ellanse", "елансе", "ellansé", "neuramis", "нейрамис", "vitaran", "вітаран",
+                   "витаран", "petaran", "петаран", "exoxe", "ексоксе", "esse", "iuse",
+                   "вайтенінг", "вайтнінг", "whitening"]
+
+def has_product(t):
+    return any(p in t for p in _PRODUCTS_SHORT)
+
 def detect_type(t_lower):
+    # Combo
+    if any(kw in t_lower for kw in ["комбо", "поєднати", "сочетать"]):
+        return "combo"
+    # KB (регламенти)
+    if any(kw in t_lower for kw in ["сезон", "регламент", "відпустк", "відрядж"]) and not has_product(t_lower):
+        return "kb"
     if any(kw in t_lower for kw in _TYPE_C_KEYWORDS):
         return "feedback"
-    if re.search(r'\s(-\s*не|,\s*не|,\s*а\s+не)\s+\w', t_lower):
+    # Numeric correction "N міс - не M"
+    if re.search(r'\b\d+\s*(міс|мес|год|дн|%|мг|мл|мкм)\S*\s*[-,]\s*(а\s+)?не\s+\d+', t_lower):
         return "feedback"
     if any(kw in t_lower for kw in _TYPE_B_KEYWORDS):
         return "evaluate"
     if any(kw in t_lower for kw in _OBJECTION_KEYWORDS):
+        # Без продукту і без історії → уточнення
+        if not has_product(t_lower):
+            return "ask_product"
         return "sos"
     return "info"
 
@@ -88,45 +105,57 @@ def get_rag_context(query, has_competitor=False):
 
 
 async def extract_facts(context, query):
-    resp = await client.chat.completions.create(
-        model="gpt-4o-mini", timeout=15, temperature=0.0, max_tokens=800,
-        messages=[
-            {"role": "system", "content": PROMPT_EXTRACT},
-            {"role": "user", "content": f"КОНТЕКСТ:\n{context}\n\nЗАПИТ:\n{query}"}
-        ]
-    )
-    return resp.choices[0].message.content.strip()
+    for attempt in range(3):
+        try:
+            resp = await client.chat.completions.create(
+                model="gpt-4o-mini", timeout=30, temperature=0.0, max_tokens=800,
+                messages=[
+                    {"role": "system", "content": PROMPT_EXTRACT},
+                    {"role": "user", "content": f"КОНТЕКСТ:\n{context}\n\nЗАПИТ:\n{query}"}
+                ]
+            )
+            return resp.choices[0].message.content.strip()
+        except Exception as e:
+            if attempt == 2:
+                return f"[extract failed: {e}]"
+            await asyncio.sleep(2)
 
 
 async def run_query(query, subtype, context, extracted=""):
     system_prompt = PROMPTS[subtype]
     ctx = f"ВИТЯГНУТІ ФАКТИ:\n{extracted}\n\n{context}" if extracted else context
-    resp = await client.chat.completions.create(
-        model="gpt-4o", timeout=30, temperature=0.3, max_tokens=1500,
-        messages=[
-            {"role": "system", "content": system_prompt},
-            {"role": "user", "content": f"КОНТЕКСТ:\n{ctx}\n\nВОПРОС:\n{query}"}
-        ]
-    )
-    text = resp.choices[0].message.content.strip()
-    # ** → * як в production
-    text = re.sub(r'\*\*(.+?)\*\*', r'*\1*', text)
-    return text
+    for attempt in range(3):
+        try:
+            resp = await client.chat.completions.create(
+                model="gpt-4o", timeout=60, temperature=0.3, max_tokens=1500,
+                messages=[
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": f"КОНТЕКСТ:\n{ctx}\n\nВОПРОС:\n{query}"}
+                ]
+            )
+            text = resp.choices[0].message.content.strip()
+            return re.sub(r'\*\*(.+?)\*\*', r'*\1*', text)
+        except Exception as e:
+            if attempt == 2:
+                return f"[LLM failed: {e}]"
+            await asyncio.sleep(3)
 
 
-# --- 11 реальних дизлайків ---
+# --- 13 запитів Александри сьогодні ---
 QUERIES = [
-    (611, "дорого"),
-    (608, "дай повний протокол - скільки потрібно всього процедур?"),
-    (606, "косметолог не хоче купувати IUSE скін бустер тому що це моно препарат, надає перевагу препаратам с мулті складом"),
-    (605, "косметолог не хоче купувати IUSE SB тому що це моно препарат, надає перевагу препаратам с мулті складом"),
-    (604, "клієнт питає чому Vitaran вайтенінг сильно пече"),
-    (600, "у клієнтів тривала постпроцедурна реабілітація після процедури Petaran, на Sculptra немає такого"),
     (599, "Petaran - не бачу результату, інші препарати дають більш виражений ліфтинг"),
-    (575, "фахівець не хоче працювати з IUSE skin booster, бо вважає що монокомпонентні препарати вже не в тренді. менеджер відповів що гіалуронова кислота це основа косметології і в деяких випадках є необхідним"),
-    (574, "комунікація з косметологом: косметолог не хоче працювати з Neuramis, бо його багато на сірому ринку за більш низькою ціною"),
-    (573, "інтервал Ellanse і Petaran 6 міс. - не 3 міс."),
-    (570, "Petaran - не бачу результату, інші препарати дають більш виражений ліфтинг"),
+    (600, "у клієнтів тривала постпроцедурна реабілітація після процедури Petaran, на Sculptra немає такого"),
+    (601, "комбо з Petaran"),
+    (602, "комбо з Ellanse"),
+    (603, "сезон весна - травень"),
+    (604, "клієнт питає чому Vitaran вайтенінг сильно пече"),
+    (605, "косметолог не хоче купувати IUSE SB тому що це моно препарат, надає перевагу препаратам с мулті складом"),
+    (606, "косметолог не хоче купувати IUSE скін бустер тому що це моно препарат, надає перевагу препаратам с мулті складом"),
+    (607, "Vitaran I з Vitaran whitening"),
+    (608, "дай повний протокол - скільки потрібно всього процедур?"),
+    (609, "клієнт питає чому Ellanse такий дорогий колагеностимулятор"),
+    (610, "Які переваги Ellansé для лікаря та пацієнта?"),
+    (611, "дорого"),
 ]
 
 
@@ -146,16 +175,34 @@ async def main():
 
         print(f"ROUTING: {subtype.upper()}  |  RAG competitors: {has_comp}")
 
-        if subtype == "feedback":
-            # Feedback не потребує RAG/extract
+        if subtype == "ask_product":
+            answer = ("📝 Про який продукт йде мова?\n\n"
+                      "Напиши заперечення разом з назвою препарату — і я дам конкретну SOS-відповідь "
+                      "з цифрами, killer phrase і next step.\n\n"
+                      "_Приклад:_ «Ellanse дорого», «лікар не хоче купувати Neuramis», «Vitaran сильно пече»")
+        elif subtype == "kb":
+            answer = "В поточних регламентах інформації не знайдено. Якщо питання стосується препаратів — спробуй розділ 💼 Sales Коуч."
+        elif subtype == "combo":
+            # Combo через PROMPT_COMBO з prompts.py
+            from prompts import PROMPT_COMBO
+            context = get_rag_context(query, has_comp)
+            resp = await client.chat.completions.create(
+                model="gpt-4o", timeout=30, temperature=0.3, max_tokens=1500,
+                messages=[
+                    {"role": "system", "content": PROMPT_COMBO},
+                    {"role": "user", "content": f"КОНТЕКСТ:\n{context}\n\nВОПРОС:\n{query}"}
+                ]
+            )
+            answer = re.sub(r'\*\*(.+?)\*\*', r'*\1*', resp.choices[0].message.content.strip())
+        elif subtype == "feedback":
             answer = await run_query(query, "feedback", "", "")
         else:
             context = get_rag_context(query, has_comp)
             extracted = await extract_facts(context, query) if subtype in ("sos", "evaluate") else ""
             answer = await run_query(query, subtype, context, extracted)
 
-        print(f"\nANSWER:")
-        print(answer[:1200])
+        print(f"\nANSWER ({len(answer)} chars):")
+        print(answer)
         print()
 
 
