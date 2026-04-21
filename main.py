@@ -119,23 +119,38 @@ def get_user_role(user_id: int) -> str:
 def is_admin(user_id: int) -> bool:
     return user_id == ADMIN_ID or get_user_role(user_id) == "admin"
 
-# --- RATE LIMITER (sliding window, in-memory) ---
+# --- RATE LIMITER ---
+# Burst protection (sliding window in-memory) + daily cap (DB-backed via logs table)
 _rate_buckets: dict[int, deque] = {}
-RATE_LIMIT_MAX = 10     # max requests per window per user
+RATE_LIMIT_MAX = 10     # max requests per window per user (burst)
 RATE_LIMIT_WINDOW = 60  # seconds
+DAILY_LIMIT_PER_USER = int(os.getenv("DAILY_LIMIT_PER_USER", "50"))  # cost/abuse cap
 
-def check_rate_limit(user_id: int) -> bool:
-    """Повертає True якщо запит дозволений, False — якщо ліміт вичерпано."""
+def check_rate_limit(user_id: int) -> tuple[bool, str | None]:
+    """Returns (allowed, reason). reason='burst' або 'daily' при відмові."""
+    if user_id == ADMIN_ID:
+        return True, None
+    # Burst — sliding 60s
     now = time.monotonic()
-    if user_id not in _rate_buckets:
-        _rate_buckets[user_id] = deque()
-    dq = _rate_buckets[user_id]
+    dq = _rate_buckets.setdefault(user_id, deque())
     while dq and now - dq[0] > RATE_LIMIT_WINDOW:
         dq.popleft()
     if len(dq) >= RATE_LIMIT_MAX:
-        return False
+        return False, "burst"
+    # Daily — count requests today from logs table
+    if DAILY_LIMIT_PER_USER > 0:
+        try:
+            today = datetime.now().strftime("%Y-%m-%d")
+            row = db.query(
+                "SELECT COUNT(*) FROM logs WHERE user_id=%s AND date::date >= %s::date",
+                (str(user_id), today), fetchone=True
+            )
+            if row and row[0] >= DAILY_LIMIT_PER_USER:
+                return False, "daily"
+        except Exception as e:
+            logger.warning("daily rate check failed for uid=%s: %s", user_id, e)
     dq.append(now)
-    return True
+    return True, None
 
 _openai_quota_exceeded = False  # флаг: OpenAI закончился баланс → не дёргать повторно до рестарта
 
@@ -149,11 +164,31 @@ MODEL_GOOGLE = "gemini-2.0-flash"
 MODEL_CLAUDE = "claude-sonnet-4-6"
 
 # --- LOGGING ---
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
-    datefmt="%Y-%m-%d %H:%M:%S",
-)
+class _JsonFormatter(logging.Formatter):
+    """JSON-форматтер для structured logging (Loki/CloudWatch/Sentry friendly)."""
+    def format(self, record):
+        import json as _json
+        payload = {
+            "ts": self.formatTime(record, "%Y-%m-%dT%H:%M:%S"),
+            "level": record.levelname,
+            "logger": record.name,
+            "msg": record.getMessage(),
+        }
+        if record.exc_info:
+            payload["exc"] = self.formatException(record.exc_info)
+        return _json.dumps(payload, ensure_ascii=False)
+
+_LOG_FORMAT = os.getenv("LOG_FORMAT", "text").lower()
+if _LOG_FORMAT == "json":
+    handler = logging.StreamHandler()
+    handler.setFormatter(_JsonFormatter())
+    logging.basicConfig(level=logging.INFO, handlers=[handler])
+else:
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s [%(levelname)s] %(name)s: %(message)s",
+        datefmt="%Y-%m-%d %H:%M:%S",
+    )
 logger = logging.getLogger("emet_bot")
 
 # --- RAG & LLM CONSTANTS ---
@@ -378,6 +413,21 @@ def init_db():
                 (ip TEXT PRIMARY KEY,
                  count INTEGER DEFAULT 0,
                  locked_until TIMESTAMP)''')
+
+            # Історія LLM-judge — щоденні агреговані бали якості (для тренду)
+            cur.execute('''CREATE TABLE IF NOT EXISTS quality_history
+                (date DATE PRIMARY KEY,
+                 dialogs_total INTEGER,
+                 dialogs_judged INTEGER,
+                 avg_helpfulness NUMERIC(3,1),
+                 avg_factual NUMERIC(3,1),
+                 avg_format NUMERIC(3,1),
+                 avg_role NUMERIC(3,1),
+                 p0_count INTEGER DEFAULT 0,
+                 p1_count INTEGER DEFAULT 0,
+                 refusal_rate NUMERIC(4,1),
+                 cost_usd NUMERIC(8,2),
+                 created_at TIMESTAMP DEFAULT NOW())''')
 
 
 def _load_chat_history_db(user_id: int) -> list:
@@ -1305,8 +1355,15 @@ MAX_QUERY_LEN = 5000
 
 async def process_text_query(text: str, message: types.Message, state: FSMContext):
     """Основная RAG-логика. Принимает text явно (для голоса/фото/текста)."""
-    if not check_rate_limit(message.from_user.id):
-        await message.answer("⏳ Забагато запитів. Зачекайте хвилину і спробуйте знову.")
+    _ok, _reason = check_rate_limit(message.from_user.id)
+    if not _ok:
+        if _reason == "daily":
+            await message.answer(
+                f"📊 Сьогодні ви досягли денного ліміту ({DAILY_LIMIT_PER_USER} запитів). "
+                f"Ліміт скинеться опівночі. Якщо потрібно більше — напишіть адміністратору."
+            )
+        else:
+            await message.answer("⏳ Забагато запитів за хвилину. Зачекайте хвилину і спробуйте знову.")
         return
     if len(text) > MAX_QUERY_LEN:
         await message.answer(f"⚠️ Запит завеликий (максимум {MAX_QUERY_LEN} символів). Скоротіть, будь ласка.")

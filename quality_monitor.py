@@ -362,6 +362,48 @@ def _summarize_llm_scores(judge_results):
     }
 
 
+def _save_quality_history(dialogs, findings, llm_summary):
+    """Зберігає денний агрегований запис у quality_history. Не падає при помилці."""
+    try:
+        today = datetime.now().strftime("%Y-%m-%d")
+        total = len(dialogs)
+        refusals = sum(1 for f in findings if f["type"] == "refusal")
+        p0 = sum(1 for f in findings if f["severity"] == "P0")
+        p1 = sum(1 for f in findings if f["severity"] == "P1")
+        refusal_rate = round(refusals / total * 100, 1) if total else 0
+        total_in = sum(d.get("tokens_in", 0) or 0 for d in dialogs)
+        total_out = sum(d.get("tokens_out", 0) or 0 for d in dialogs)
+        cost = round((total_in * 2.5 + total_out * 10.0) / 1_000_000, 2)
+        if llm_summary:
+            db.execute(
+                "INSERT INTO quality_history (date, dialogs_total, dialogs_judged, "
+                "avg_helpfulness, avg_factual, avg_format, avg_role, "
+                "p0_count, p1_count, refusal_rate, cost_usd) "
+                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) "
+                "ON CONFLICT (date) DO UPDATE SET "
+                "dialogs_total=EXCLUDED.dialogs_total, dialogs_judged=EXCLUDED.dialogs_judged, "
+                "avg_helpfulness=EXCLUDED.avg_helpfulness, avg_factual=EXCLUDED.avg_factual, "
+                "avg_format=EXCLUDED.avg_format, avg_role=EXCLUDED.avg_role, "
+                "p0_count=EXCLUDED.p0_count, p1_count=EXCLUDED.p1_count, "
+                "refusal_rate=EXCLUDED.refusal_rate, cost_usd=EXCLUDED.cost_usd",
+                (today, total, llm_summary["n"],
+                 llm_summary["avg_helpfulness"], llm_summary["avg_factual"],
+                 llm_summary["avg_format"], llm_summary["avg_role"],
+                 p0, p1, refusal_rate, cost)
+            )
+        else:
+            db.execute(
+                "INSERT INTO quality_history (date, dialogs_total, dialogs_judged, "
+                "p0_count, p1_count, refusal_rate, cost_usd) VALUES (%s,%s,0,%s,%s,%s,%s) "
+                "ON CONFLICT (date) DO UPDATE SET dialogs_total=EXCLUDED.dialogs_total, "
+                "p0_count=EXCLUDED.p0_count, p1_count=EXCLUDED.p1_count, "
+                "refusal_rate=EXCLUDED.refusal_rate, cost_usd=EXCLUDED.cost_usd",
+                (today, total, p0, p1, refusal_rate, cost)
+            )
+    except Exception as e:
+        print(f"_save_quality_history error: {e}")
+
+
 def run_monitor():
     """Main entry point."""
     print(f"Quality Monitor: analyzing last {HOURS_BACK}h of dialogs...")
@@ -412,6 +454,9 @@ def run_monitor():
                 "dialog_id": r["dialog_id"], "match": r["question"][:80],
             })
 
+    # Зберегти агрегат у quality_history (для тренду)
+    _save_quality_history(dialogs, all_findings, llm_summary)
+
     # Build report
     report = build_report(dialogs, all_findings, llm_summary)
     print("\n" + report)
@@ -451,6 +496,8 @@ def run_monitor_safe():
                 "description": f"LLM judge: {r.get('issue', 'low score')}",
                 "dialog_id": r["dialog_id"], "match": r["question"][:80],
             })
+
+    _save_quality_history(dialogs, all_findings, llm_summary)
 
     report = build_report(dialogs, all_findings, llm_summary)
     return report, all_findings

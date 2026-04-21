@@ -2141,6 +2141,49 @@ def quality_page():
         mtime = os.path.getmtime(report_path)
         report_time = datetime.fromtimestamp(mtime).strftime("%d.%m.%Y %H:%M")
 
+    # Історія LLM-judge — останні 30 днів
+    history_html = ""
+    try:
+        rows = db.query(
+            "SELECT date, dialogs_total, dialogs_judged, avg_helpfulness, avg_factual, "
+            "avg_format, avg_role, p0_count, refusal_rate, cost_usd "
+            "FROM quality_history ORDER BY date DESC LIMIT 30"
+        )
+        if rows:
+            history_rows = []
+            for r in rows:
+                date_str = r[0].strftime("%d.%m") if hasattr(r[0], "strftime") else str(r[0])
+                judged = r[2] or 0
+                hp = f"{r[3]}" if r[3] is not None else "—"
+                fc = f"{r[4]}" if r[4] is not None else "—"
+                fm = f"{r[5]}" if r[5] is not None else "—"
+                ro = f"{r[6]}" if r[6] is not None else "—"
+                p0 = r[7] or 0
+                rr = f"{r[8]}%" if r[8] is not None else "—"
+                cost = f"${r[9]}" if r[9] is not None else "—"
+                p0_color = "color:#c62828" if p0 > 0 else "color:#2e7d32"
+                history_rows.append(
+                    f"<tr><td>{date_str}</td><td>{r[1] or 0}</td><td>{judged}</td>"
+                    f"<td>{hp}</td><td>{fc}</td><td>{fm}</td><td>{ro}</td>"
+                    f"<td style='{p0_color}'>{p0}</td><td>{rr}</td><td>{cost}</td></tr>"
+                )
+            history_html = (
+                "<div class='card'><h2>Історія якості (останні 30 днів)</h2>"
+                "<p style='font-size:13px;color:#666;margin-bottom:12px'>"
+                "Helpful, Factual, Format, Role — оцінки LLM-judge від 1 до 10. "
+                "P0 — критичні помилки. Refusal — % відмов. Cost — приблизна вартість запитів за день.</p>"
+                "<table style='width:100%;border-collapse:collapse;font-size:13px'>"
+                "<thead><tr style='background:#f0f1f5;text-align:left'>"
+                "<th style='padding:8px'>Дата</th><th>Діалогів</th><th>Оцінено</th>"
+                "<th>Helpful</th><th>Factual</th><th>Format</th><th>Role</th>"
+                "<th>P0</th><th>Refusal</th><th>Cost</th>"
+                "</tr></thead><tbody>"
+                + "".join(history_rows)
+                + "</tbody></table></div>"
+            )
+    except Exception as e:
+        history_html = f"<div class='card'><p style='color:#c62828'>quality_history недоступна: {e}</p></div>"
+
     # Check if analysis is running (lock file)
     lock_path = os.path.join(os.path.dirname(__file__), "data", "quality_running.lock")
     is_running = os.path.exists(lock_path)
@@ -2170,6 +2213,7 @@ def quality_page():
   <h2>Останній звіт {('(' + report_time + ')') if report_time else ''}</h2>
   <pre style='white-space:pre-wrap;font-size:13px;background:#f7f8fa;padding:16px;border-radius:8px;max-height:600px;overflow-y:auto'>{last_report or 'Звіт ще не створювався. Натисніть кнопку вище.'}</pre>
 </div>
+{history_html}
 """
     return render_template_string(BASE_HTML, content=content, active="quality")
 
