@@ -17,10 +17,11 @@ ADMIN_ID=""
 PG_USER=""
 PG_DB=""
 if [ -f "$ENV_FILE" ]; then
-    BOT_TOKEN=$(grep '^TELEGRAM_TOKEN=' "$ENV_FILE" | cut -d= -f2- | tr -d '"' | tr -d "'")
-    ADMIN_ID=$(grep '^ADMIN_ID=' "$ENV_FILE" | cut -d= -f2- | tr -d '"' | tr -d "'")
-    PG_USER=$(grep '^POSTGRES_USER=' "$ENV_FILE" | cut -d= -f2- | tr -d '"' | tr -d "'")
-    PG_DB=$(grep '^POSTGRES_DB=' "$ENV_FILE" | cut -d= -f2- | tr -d '"' | tr -d "'")
+    # tr -d '\r' — на випадок CRLF line endings у .env (Windows)
+    BOT_TOKEN=$(grep '^TELEGRAM_TOKEN=' "$ENV_FILE" | cut -d= -f2- | tr -d '"\047\r')
+    ADMIN_ID=$(grep '^ADMIN_ID=' "$ENV_FILE" | cut -d= -f2- | tr -d '"\047\r')
+    PG_USER=$(grep '^POSTGRES_USER=' "$ENV_FILE" | cut -d= -f2- | tr -d '"\047\r')
+    PG_DB=$(grep '^POSTGRES_DB=' "$ENV_FILE" | cut -d= -f2- | tr -d '"\047\r')
 fi
 
 send_tg() {
