@@ -3663,15 +3663,17 @@ async def daily_cost_task():
             today_cost = sum(_calc_row_cost(r.get("model",""), r.get("tokens_in") or 0, r.get("tokens_out") or 0) for r in rows)
             today_calls = len(rows)
 
-            # Тихі години — не турбувати адміна вночі (22:00-09:00)
+            # Тихі години — звичайні алерти не турбують вночі (22:00-09:00),
+            # але критичні (2× ліміт) проривають тишу
             current_hour = datetime.now().hour
             quiet_hours = current_hour >= 22 or current_hour < 9
+            critical_breach = today_cost >= DAILY_BUDGET_LIMIT * 2
 
-            # Алерт якщо перевищено денний бюджет (тільки в робочі години)
-            if today_cost >= DAILY_BUDGET_LIMIT and not quiet_hours:
+            if today_cost >= DAILY_BUDGET_LIMIT and (not quiet_hours or critical_breach):
+                prefix = "🚨 *КРИТИЧНО: 2×+ бюджету!*" if critical_breach else "⚠️ *EMET: перевищено денний бюджет!*"
                 await bot.send_message(
                     ADMIN_ID,
-                    f"⚠️ *EMET: перевищено денний бюджет!*\n\n"
+                    f"{prefix}\n\n"
                     f"Витрачено сьогодні: *${today_cost:.3f}* з ліміту ${DAILY_BUDGET_LIMIT:.2f}\n"
                     f"Запитів: {today_calls}\n\n"
                     f"Перегляд: /admin → Дашборд",
