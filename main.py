@@ -3663,8 +3663,12 @@ async def daily_cost_task():
             today_cost = sum(_calc_row_cost(r.get("model",""), r.get("tokens_in") or 0, r.get("tokens_out") or 0) for r in rows)
             today_calls = len(rows)
 
-            # Алерт якщо перевищено денний бюджет
-            if today_cost >= DAILY_BUDGET_LIMIT:
+            # Тихі години — не турбувати адміна вночі (22:00-09:00)
+            current_hour = datetime.now().hour
+            quiet_hours = current_hour >= 22 or current_hour < 9
+
+            # Алерт якщо перевищено денний бюджет (тільки в робочі години)
+            if today_cost >= DAILY_BUDGET_LIMIT and not quiet_hours:
                 await bot.send_message(
                     ADMIN_ID,
                     f"⚠️ *EMET: перевищено денний бюджет!*\n\n"
@@ -3674,8 +3678,8 @@ async def daily_cost_task():
                     parse_mode="Markdown"
                 )
 
-            # Щоденний звіт о 23:00
-            if datetime.now().hour == 23:
+            # Щоденний звіт о 22:00
+            if current_hour == 22:
                 # Розбивка по моделях за сьогодні
                 model_cost: dict = {}
                 for r in rows:
