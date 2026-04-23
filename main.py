@@ -1129,7 +1129,19 @@ def get_context(query: str, mode: str = "kb", provider: str = "openai", has_comp
 
     if mode in ("kb", "cases", "operational"):
         vdb = _get_vdb("kb", provider)
-        return _extract_docs(_search_with_score(vdb, normalized_query, RAG_K_DEFAULT))
+        docs = _search_with_score(vdb, normalized_query, RAG_K_DEFAULT)
+        context_text, sources = _extract_docs(docs)
+        # KB→Coach fallback: якщо в регламентах нічого не знайшли (або занадто мало),
+        # для KB-режиму спробувати продуктовий індекс — менеджеру не треба перемикати режим.
+        if mode == "kb" and len(context_text.strip()) < 200:
+            logger.info("KB context weak (%d chars), fallback to products RAG: %r", len(context_text.strip()), query[:80])
+            vdb_p = _get_vdb("products", provider)
+            docs_p = _search_with_score(vdb_p, normalized_query, RAG_K_DEFAULT)
+            if docs_p:
+                ctx_p, src_p = _extract_docs(docs_p)
+                if len(ctx_p.strip()) > len(context_text.strip()):
+                    return ctx_p, src_p
+        return context_text, sources
 
     if mode == "combo":
         # Combo НЕ використовує product-lock — потрібно знайти чанки з ОБОМА продуктами
