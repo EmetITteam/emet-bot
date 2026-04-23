@@ -1816,17 +1816,28 @@ def access():
         else:
             status_cell = user_select(r["id"]) if tg_users else "<span class='badge' style='background:#fff3e0;color:#e65100'>Очікує</span>"
 
-        role_style = role_colors.get(r.get("role", ""), "#f5f5f5;color:#333")
-        role_badge = f"<span class='badge' style='background:{role_style}'>{r.get('role','')}</span>"
+        current_role = r.get("role", "manager") or "manager"
+        # Inline dropdown — авто-submit при зміні
+        role_options = "".join(
+            f"<option value='{ro}'{' selected' if ro==current_role else ''}>{ro}</option>"
+            for ro in ["manager", "director", "operator", "admin"]
+        )
+        role_style = role_colors.get(current_role, "#f5f5f5;color:#333")
+        rid = r['id']
+        role_cell = (
+            f"<form method='post' action='/access/role/{rid}' style='margin:0'>"
+            f"<select name='role' class='form-control' onchange='this.form.submit()' "
+            f"style='padding:3px 6px;font-size:12px;background:{role_style};border:none;border-radius:6px;cursor:pointer'>"
+            f"{role_options}</select></form>"
+        )
         act_date = str(r.get("activated_at") or "")[:16] or "—"
         em  = r.get('email', '')
         confirm_del_em = json.dumps("Видалити " + em + "?")
         safe_em = html_escape(em)
-        rid = r['id']
         rows_html += (
             f"<tr>"
             f"<td>{safe_em}</td>"
-            f"<td>{role_badge}</td>"
+            f"<td>{role_cell}</td>"
             f"<td>{r.get('full_name') or '—'}</td>"
             f"<td>{status_cell}</td>"
             f"<td class='text-muted'>{activated or '—'}</td>"
@@ -1936,6 +1947,31 @@ def access_add():
             (email, role, name)
         )
         flash(f"Email {email} додано з роллю {role}", "success")
+    except Exception as e:
+        flash(f"Помилка: {e}", "danger")
+    return redirect(url_for("access"))
+
+
+@app.route("/access/role/<int:email_id>", methods=["POST"])
+@login_required
+def access_change_role(email_id):
+    new_role = (request.form.get("role") or "").strip()
+    if new_role not in ("admin", "manager", "operator", "director"):
+        flash("Невірна роль", "danger")
+        return redirect(url_for("access"))
+    try:
+        row = db_query(
+            "SELECT email, activated_by_user_id FROM allowed_emails WHERE id=%s",
+            (email_id,), fetchone=True
+        )
+        if not row:
+            flash("Email не знайдено", "danger")
+            return redirect(url_for("access"))
+        db_exec("UPDATE allowed_emails SET role=%s WHERE id=%s", (new_role, email_id))
+        # Якщо вже активований — синхронізуємо в users (звідки рейт-лімітер читає)
+        if row.get("activated_by_user_id"):
+            db_exec("UPDATE users SET role=%s WHERE user_id=%s", (new_role, row["activated_by_user_id"]))
+        flash(f"{row['email']} → роль {new_role}", "success")
     except Exception as e:
         flash(f"Помилка: {e}", "danger")
     return redirect(url_for("access"))
