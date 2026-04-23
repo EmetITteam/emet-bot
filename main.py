@@ -284,6 +284,8 @@ def init_db():
             cur.execute('''CREATE TABLE IF NOT EXISTS logs
                 (id SERIAL PRIMARY KEY, date TEXT, user_id TEXT, username TEXT, mode TEXT, ai_engine TEXT,
                  question TEXT, answer TEXT, found_in_db INTEGER, model TEXT, tokens_in INTEGER, tokens_out INTEGER)''')
+            # Failover depth: 0=primary OpenAI, 1=Gemini fallback, 2=Claude fallback
+            cur.execute("ALTER TABLE logs ADD COLUMN IF NOT EXISTS failover_depth INTEGER DEFAULT 0")
 
             # Курсы
             cur.execute('''CREATE TABLE IF NOT EXISTS courses
@@ -685,14 +687,15 @@ def seed_onboarding():
 
 
 # --- 5b. ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ БД ---
-def log_to_db(user_id, username, mode, ai_engine, question, answer, has_source, model=None, tokens_in=0, tokens_out=0) -> int:
-    """Записує лог запиту і повертає log_id (для прив'язки feedback)."""
+def log_to_db(user_id, username, mode, ai_engine, question, answer, has_source, model=None, tokens_in=0, tokens_out=0, failover_depth=0) -> int:
+    """Записує лог запиту і повертає log_id (для прив'язки feedback).
+    failover_depth: 0=OpenAI, 1=Gemini fallback, 2=Claude fallback — для observability"""
     try:
         return db.execute_returning(
-            "INSERT INTO logs (date, user_id, username, mode, ai_engine, question, answer, found_in_db, model, tokens_in, tokens_out) "
-            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id",
+            "INSERT INTO logs (date, user_id, username, mode, ai_engine, question, answer, found_in_db, model, tokens_in, tokens_out, failover_depth) "
+            "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) RETURNING id",
             (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), user_id, username,
-             mode, ai_engine, question, answer, 1 if has_source else 0, model, tokens_in, tokens_out)
+             mode, ai_engine, question, answer, 1 if has_source else 0, model, tokens_in, tokens_out, failover_depth)
         )
     except Exception as e:
         logger.error("log DB write error: %s", e)
@@ -2082,6 +2085,7 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
     _tokens_in = 0
     _tokens_out = 0
     _model_used = None
+    _failover_depth = 0  # 0 = OpenAI primary, 1 = Gemini fallback, 2 = Claude fallback
     _context_was_empty = False
     _t_start = time.monotonic()
 
@@ -2213,6 +2217,7 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
                 _tokens_in = getattr(res.usage_metadata, "prompt_token_count", 0) or 0
                 _tokens_out = getattr(res.usage_metadata, "candidates_token_count", 0) or 0
             _model_used = MODEL_GOOGLE
+            _failover_depth = 1
         except Exception as e_google:
             logger.error("Google Gemini unavailable: %s", e_google)
             if ADMIN_ID:
@@ -2244,6 +2249,7 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
             _tokens_in = claude_msg.usage.input_tokens
             _tokens_out = claude_msg.usage.output_tokens
             _model_used = MODEL_CLAUDE
+            _failover_depth = 2
         except Exception as e_claude:
             logger.error("Claude unavailable: %s", e_claude)
             if ADMIN_ID:
@@ -2321,7 +2327,7 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
 
     _uname = message.from_user.username or f"id{message.from_user.id}"
     _has_source = bool(sources) and not _context_was_empty
-    _log_id = log_to_db(message.from_user.id, _uname, mode_key, ai_used, text, answer, _has_source, _model_used, _tokens_in, _tokens_out)
+    _log_id = log_to_db(message.from_user.id, _uname, mode_key, ai_used, text, answer, _has_source, _model_used, _tokens_in, _tokens_out, _failover_depth)
 
     # Зберігаємо RAG sources для відповіді на "з якого документа"
     _source_names = list(set(s.get("name", "?") for s in sources.values())) if sources else []
