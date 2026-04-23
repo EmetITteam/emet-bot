@@ -190,6 +190,25 @@ i, iII, Whitening, Tox, Skin Healer
 - "поєднується Ellanse з лазером?" → clinical_contraindication (питання сумісності з ПРОЦЕДУРОЮ/препаратом НЕ-EMET)
 - "комбо Ellanse + Petaran" → combo_with_product (комбо з ІНШИМ EMET-препаратом)
 
+**МОНО vs КОМБО (часта плутанина — слово "протокол" саме по собі НЕ значить combo!):**
+МОНО (один препарат) — info_protocol:
+- "Потрібен протокол ПРЕПАРАТОМ Петаран" → info_protocol (моно-Petaran)
+- "Дай протокол для Vitaran i" → info_protocol
+- "Як працювати з Ellanse, протокол" → info_protocol
+- "Скільки процедур Petaran" → info_protocol
+- "Протокол розведення Petaran" → info_protocol
+- "Протокол для покращення шкіри препаратом X" → info_protocol (один препарат, питання про схему)
+
+КОМБО (два+ препарати разом) — combo_with_product / combo_for_indication:
+- "Комбо Petaran + Ellanse" → combo_with_product (явно два препарати)
+- "З якими препаратами поєднати Vitaran" → combo_with_product (просять список комбінацій)
+- "Комбіновані протоколи з Ellanse" → combo_with_product
+- "Протоколи для пігментації" → combo_for_indication (показання, не препарат → можливо комбо)
+- "Що додати до Petaran" → combo_with_product (просять напарник)
+
+ПРАВИЛО: якщо в запиті є ОДИН препарат і слово "протокол/розведення/процедура/схема" — це МОНО (info_protocol).
+Якщо є ДВА препарати АБО фраза "комбо/комбінувати/поєднати/з якими" — це COMBO.
+
 **Інформаційні:**
 - "розкажи про X" → info_about_product
 - "склад X" → info_composition
