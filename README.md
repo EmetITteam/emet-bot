@@ -48,28 +48,47 @@ docker compose up -d
 ## Структура проекту
 
 ```
-├── main.py              # Ядро бота (FSM, хендлери, RAG)
-├── admin_panel.py       # Flask адмін-панель (23 маршрути)
-├── prompts.py           # 5 системних промптів
+├── main.py              # Ядро бота (FSM, хендлери, RAG, dialog_state, knowledge_gaps detector)
+├── admin_panel.py       # Flask адмін-панель (~26 маршрутів, /gaps, /quality з SD метриками)
+├── classifier.py        # LLM classifier (19 інтентів, few-shot, product_canonical)
+├── dialog_state.py      # NEW: per-turn state tracker (intent, product, comparison_target)
+├── prompts.py           # Системні промпти
+├── prompts_v2.py        # Модульні: BASE (anti-sycophancy + scope) + SOS / INFO / VERBATIM (STRICT-MODE) / COMBO / FEEDBACK
 ├── db.py                # PostgreSQL connection pool
-├── sync_manager.py      # Google Drive → ChromaDB
-├── quality_monitor.py   # Щоденний аналіз якості
-├── scripts/             # Міграції та одноразові скрипти
+├── sync_manager.py      # Google Drive → ChromaDB + scope tagging + retry + admin notify
+├── quality_monitor.py   # LLM-judge + SD metrics + quality_history
+├── scripts/             # Міграції, backup_indices.sh
 ├── tools/               # Імпорт курсів, шаблони, аналітика
-├── tests/               # Автотести
+├── tests/               # Тести + regression_fixtures.json + run_regression.py (eval harness)
 ├── courses/             # Excel-файли курсів
-├── docs/                # Документація
-└── data/                # ChromaDB індекси (runtime)
+├── docs/                # Документація + scope_C_to_consider.md (відкладений backlog)
+└── data/                # ChromaDB індекси (runtime, bind-mounted)
 ```
 
 ## Ключові можливості
 
 - **8 режимів**: Sales Coach, База знань, LMS, Кейси, Операційні, Онбординг, Сертифікати, Комбо
-- **3-zone RAG**: Products / Competitors / Merge — залежно від запиту
-- **Triple LLM failover**: GPT-4o → Gemini → Claude
-- **LMS**: 14 курсів, 44 теми, тести з scoring
-- **Quality Monitor**: щоденний звіт якості тільки адміну
-- **Admin Panel**: дашборд, управління знаннями, курсами, доступами
+- **3-zone RAG** (598 + 599 + 470 chunks) з product-locked retrieval (16 продуктів) і scope-метаданими
+- **LLM classifier** з 19 інтентами + product detection + confidence
+- **Triple LLM failover**: GPT-4o → Gemini → Claude (failover_depth tracked у logs)
+- **DialogState** — скид chat_history при topic shift, comparison_target tracking
+- **Anti-sycophancy** + auto-tracking виправлень → admin /gaps
+- **LMS**: 13 курсів, 48 тем, тести з scoring
+- **Quality Monitor**: LLM-judge на 10 діалогах/день + SD-метрики + еволюція по днях
+- **Eval harness**: 15 fixture-кейсів регресій + async runner
+- **Admin Panel**: дашборд, знання, курси, доступи (з role dropdown), /quality, /gaps
+- **Auto-backup**: PG dump + ChromaDB tar (cron 02:00, 7-day rotation)
+
+## Регресійні тести
+
+Перед великими правками промптів/класифікатора:
+```bash
+# Швидкий smoke (~30 сек, лише classifier):
+docker exec emet_bot_app python /app/tests/run_regression.py --no-generate
+
+# Повний прогон (~3 хв, з LLM, ~$0.10):
+docker exec emet_bot_app python /app/tests/run_regression.py
+```
 
 ## Tech Stack
 

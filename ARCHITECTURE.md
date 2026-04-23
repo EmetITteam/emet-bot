@@ -58,9 +58,10 @@ RAG-асистент з 8 режимами, LMS-системою, щоденни
 │                                                                      │
 │  ┌──────────────────────────────────────────────────┐                │
 │  │              ./data/ (shared volume)              │                │
-│  │  db_index_products_openai/   (367 chunks)         │                │
-│  │  db_index_competitors_openai/ (548 chunks)        │                │
-│  │  db_index_kb_openai/          (~100 chunks)       │                │
+│  │  db_index_products_openai/   (598 chunks)         │                │
+│  │  db_index_competitors_openai/ (599 chunks)        │                │
+│  │  db_index_kb_openai/          (~470 chunks)       │                │
+│  │  db_index_coach_openai/       (1112 source)       │                │
 │  └──────────────────────────────────────────────────┘                │
 └──────────────────────────────────────────────────────────────────────┘
         │
@@ -112,8 +113,9 @@ aesthetic_bot/
 │                              # - PROMPT_COMBO (Комбо-протоколи)
 │
 ├── db.py                      # PostgreSQL connection pool (120 рядків)
-├── sync_manager.py            # Google Drive → ChromaDB sync (523 рядків)
-├── quality_monitor.py         # Щоденний аналіз якості (310 рядків)
+├── sync_manager.py            # Google Drive → ChromaDB sync + scope metadata (~600 рядків)
+├── quality_monitor.py         # Щоденний аналіз якості + LLM judge + SD метрики (~520 рядків)
+├── dialog_state.py            # NEW (24.04): мінімальний context tracker для скиду chat_history
 │
 ├── tools/                     # Утиліти (запускаються вручну або через адмінку)
 │   ├── import_course.py       # Імпорт курсу з Excel → PostgreSQL
@@ -127,6 +129,8 @@ aesthetic_bot/
 │   └── analyze_chains.py      # Аналіз ланцюжків діалогів
 │
 ├── tests/                     # Тестування
+│   ├── regression_fixtures.json # NEW: 15 known-bad cases для регресій
+│   ├── run_regression.py        # NEW: async runner — classifier+RAG+LLM проти fixtures
 │   ├── test_routing.py        # Тести маршрутизації запитів
 │   ├── rag_smoke.py           # Smoke-тести RAG
 │   ├── health_check.py        # Health check бота
@@ -256,15 +260,21 @@ GPT-4o (primary)  →  Gemini 2.0 Flash  →  Claude Sonnet
 - `admin_login_attempts` — brute-force захист
 - `audit_log` — лог дій адміністратора
 
+**Якість і моніторинг (24.04 update):**
+- `quality_history` — щоденні агрегати LLM-judge (helpful/factual/format/role) + SD метрики (correction_rate, mode_mismatch, margin_at_risk, pct_openai/gemini/claude)
+- `knowledge_gaps` — запити де менеджер виправив бота (open/filled/dismissed) + поле med_dept_response
+- `logs.failover_depth` — нова колонка: 0=OpenAI, 1=Gemini, 2=Claude (observability LLM failover)
+
 ---
 
 ## ChromaDB індекси
 
 | Індекс | Чанків | Вміст | Chunk size |
 |--------|--------|-------|------------|
-| products_openai | ~367 | LMS курси + Sales docs | 1200/300 |
-| competitors_openai | ~548 | Competitors_MASTER файли | 1200/300 |
-| kb_openai | ~100 | Регламенти, HR, SOP | 800/150 |
+| products_openai | 598 | LMS курси + Sales docs (16 product_canonical) | 1200/300 |
+| competitors_openai | 599 | Competitors_MASTER файли | 1200/300 |
+| kb_openai | 470 | Регламенти, HR, SOP | 800/150 |
+| coach_openai | 1112 | Source — split → products + competitors | 1200/300 |
 | *_google | mirror | Google embeddings (failover) | same |
 
 **Metadata на чанках:**
@@ -273,6 +283,10 @@ GPT-4o (primary)  →  Gemini 2.0 Flash  →  Claude Sonnet
 - `file_id` — ID файлу
 - `category` — "general" / "combo"
 - `folder` — "coach" / "kb" / "products"
+- `product_canonical` — нормалізована назва продукту (ESSE / Petaran / Ellansé / Vitaran / ...) — для product-locked retrieval
+- `scope` — **NEW (24.04):** `line` / `product` / `ingredient` / `protocol` — щоб бот не приписував характеристики лінії конкретному продукту (антигалюцинація)
+
+**Розподіл scope (станом на 24.04):** product 1040 / protocol 75 / ingredient 54 / line 28
 
 ---
 
@@ -316,15 +330,16 @@ Developer (VS Code) → git push → GitHub Actions:
 
 | Задача | Розклад | Що робить |
 |--------|---------|-----------|
-| daily_quality_task | 08:00 | Аналіз діалогів → звіт ADMIN_ID |
-| daily_cost_task | 00:00 | Розрахунок витрат API |
+| daily_quality_task | 08:00 (Kyiv) | Аналіз діалогів → звіт ADMIN_ID + LLM-judge + heavy-correctors alert (>2 виправлень/день) |
+| daily_cost_task | 22:00 (Kyiv) | Денний звіт витрат → ADMIN_ID. Quiet hours 22:00-09:00 (критичні >2× ліміту прориваються) |
 | weekly_digest_task | Пн 09:00 | Дайджест всім менеджерам |
-| auto_sync_task | кожні 60 хв | Синхронізація Google Drive → ChromaDB |
-| ttl_cleanup_task | кожні 24 год | Видалення старих записів |
+| auto_sync_task | кожні 60 хв | Sync Google Drive → ChromaDB + scope tagging + retry + admin notify on fail |
+| ttl_cleanup_task | 03:00 | Видалення логів >90 днів |
+| backup_indices.sh (cron) | 02:00 | PG dump + ChromaDB tar, 7-day rotation |
 
 ---
 
-## Адмін-панель (23 маршрути)
+## Адмін-панель (~26 маршрутів)
 
 | Секція | Маршрути | Опис |
 |--------|----------|------|
@@ -332,9 +347,100 @@ Developer (VS Code) → git push → GitHub Actions:
 | 📚 База знань | /knowledge, /knowledge/upload, /delete, /restore, /sync | CRUD документів |
 | 👥 Користувачі | /users | Список + ролі |
 | 🎓 Навчання | /learning, /upload, /delete, /template, /index_courses | LMS + RAG індексація |
-| 🔑 Доступи | /access, /add, /activate, /delete, /upload | Email whitelist |
-| 🔍 Якість | /quality, /quality/run | Quality monitor |
+| 🔑 Доступи | /access, /access/add, /access/activate, /access/role, /access/delete, /upload | Email whitelist + inline role-dropdown (NEW 22.04) |
+| 🔍 Якість | /quality, /quality/run | Quality monitor + історія 30 днів + **бізнес-метрики SD** (NEW 23.04) |
+| 🆘 Пробіли знань | /gaps, /gaps/update/<id> | **NEW 23.04**: трекінг виправлень менеджерів — медвідділ закриває з відповіддю |
 | 📨 Дайджест | /digest, /digest/send | Тижневий звіт |
+
+---
+
+## Quality Layer (24.04 update)
+
+Новий шар механізмів які захищають бота від галюцинацій / sycophancy / context drift.
+Усі активні в production.
+
+```
+                Запит менеджера
+                      │
+                      ▼
+            ┌─────────────────────┐
+            │   Classifier (LLM)   │ → intent, product, confidence
+            └──────────┬──────────┘
+                       │
+                       ▼
+        ┌─────────────────────────────┐
+        │ Differential diagnosis      │  conf<0.5 + ambiguous → clarify (no LLM call)
+        └──────────────┬──────────────┘
+                       │
+                       ▼
+        ┌─────────────────────────────┐
+        │ Knowledge gap detector       │  intent=correction → log to knowledge_gaps
+        └──────────────┬──────────────┘
+                       │
+                       ▼
+        ┌─────────────────────────────┐
+        │ DialogState compute_state    │  topic shift → reset chat_history
+        └──────────────┬──────────────┘
+                       │
+                       ▼
+        ┌─────────────────────────────┐
+        │ RAG product-locked search    │  filter by product_canonical
+        └──────────────┬──────────────┘
+                       │
+                       ▼
+        ┌─────────────────────────────┐
+        │ _extract_docs з scope-мітками│  [SCOPE=LINE] / [SCOPE=PRODUCT] / [SCOPE=PROTOCOL]
+        └──────────────┬──────────────┘
+                       │
+                       ▼
+        ┌─────────────────────────────┐
+        │ Prompt assembly:             │
+        │ BASE (anti-sycophancy + scope│
+        │       discipline + ESSE rules│
+        │ + SOS/INFO/VERBATIM/COMBO     │  + STRICT-MODE для verbatim інтентів
+        │ + PRICE-COMPARATIVE block     │  для objection_price з comparison_target
+        └──────────────┬──────────────┘
+                       │
+                       ▼
+        ┌─────────────────────────────┐
+        │ LLM (failover_depth логується)│
+        └──────────────┬──────────────┘
+                       │
+                       ▼
+        ┌─────────────────────────────┐
+        │ log_to_db + scope context    │
+        └─────────────────────────────┘
+```
+
+**Ключові правила в BASE prompt:**
+- `#0 anti-sycophancy` — не погоджуватись автоматично з виправленням, перевіряти через RAG
+- `#0 scope discipline` — чанк з SCOPE=LINE не приписувати конкретному продукту
+- `#0 ESSE exception` — космецевтика, дозволено overview лінії якщо немає product chunk
+- `STRICT-MODE` — для composition/concentration/certs заборонено hedge-слова («приблизно», «припускаю»)
+- `PRAVILO 3 PRICE-COMPARATIVE` — 5-тезисна структура для «X дорожче за Y але дія однакова»
+- `Side effects → med dept redirect` — не пояснювати побічки, перенаправляти
+
+---
+
+## Eval Harness (regression testing)
+
+`tests/regression_fixtures.json` (15 кейсів) + `tests/run_regression.py` (async runner).
+
+Прогоняє кожен кейс через **реальний** classifier + RAG + LLM і перевіряє:
+- expected_intent / expected_product / min_confidence
+- must_contain[] / must_not_contain[]
+
+**Запуск:**
+```bash
+docker exec emet_bot_app python /app/tests/run_regression.py --no-generate   # 30 сек, лише classifier
+docker exec emet_bot_app python /app/tests/run_regression.py                 # 3 хв, з LLM (~$0.10)
+docker exec emet_bot_app python /app/tests/run_regression.py --case <id>     # один кейс
+docker exec emet_bot_app python /app/tests/run_regression.py --category esse # фільтр
+```
+
+**Workflow:** перед кожним великим коммітом у промпти/класифікатор → `--no-generate`, перевіряти що PASS-count не впав.
+
+Категорії в fixtures: `esse`, `side_effect`, `combo`, `price`, `classifier`, `scope`, `clarify`.
 
 ---
 
