@@ -304,17 +304,18 @@ async def classify(client: AsyncOpenAI, query: str, chat_history: list[dict] = N
     # для запитів типу «Refining cleanser» (1-2 слова) → раніше → out_of_scope
     hint_block = ""
     try:
-        from aliases import detect_products_in_text
+        from aliases import detect_products_in_text, map_to_canonical_brand
         words_count = len(query.strip().split())
         detected = detect_products_in_text(query)
         if detected and words_count <= 5:
-            # Підказка classifier'у: ці продукти явно згадані, не повертай out_of_scope
+            # Маппимо detected products на canonical brand для classifier
+            canonical_brand = map_to_canonical_brand(detected[0])
             hint_block = (
                 f"\n\n💡 АВТО-ДЕТЕКЦІЯ: у запиті явно знайдено продукти EMET: {detected[:3]}.\n"
+                f"Канонічний бренд: *{canonical_brand}* — ВИСТАВ примусово primary_product=\"{canonical_brand}\".\n"
                 f"Запит короткий ({words_count} слів) — це навігаційний запит про продукт.\n"
-                f"primary_product має бути з цього списку. Intent зазвичай info_about_product "
-                f"(якщо нема явного питання про склад/протокол/протипоказ).\n"
-                f"НЕ повертай out_of_scope.\n"
+                f"Intent зазвичай info_about_product (якщо нема явного питання про склад/протокол/протипоказ).\n"
+                f"⛔ НЕ повертай out_of_scope. ⛔ НЕ виставляй primary_product=null.\n"
             )
     except Exception:
         pass

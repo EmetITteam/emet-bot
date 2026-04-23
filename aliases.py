@@ -214,6 +214,28 @@ def detect_products_in_text(text: str) -> list[str]:
     return found
 
 
+def map_to_canonical_brand(product_name: str) -> str | None:
+    """Маппинг детектованного product name на canonical brand для classifier.
+    'Refining Cleanser C6' → 'ESSE', 'Vitaran Whitening' → 'Vitaran', etc.
+    Используется в pre-classifier hint щоб classifier видавав product=brand."""
+    if not product_name:
+        return None
+    p = product_name.lower()
+    # ESSE products — мапяться на ESSE
+    if any(esse_p.lower() in p for esse_p in ESSE_PRODUCTS):
+        return "ESSE"
+    if "esse" in p:
+        return "ESSE"
+    # Vitaran варіанти
+    if "vitaran" in p or "вітаран" in p:
+        return "Vitaran"
+    # Інші бренди — повертаємо як є якщо це наш канонічний брендг
+    for brand in ["Ellansé", "Petaran", "Neuramis", "Neuronox", "EXOXE", "IUSE", "Magnox"]:
+        if brand.lower() in p:
+            return brand
+    return product_name  # fallback
+
+
 def get_known_products_for_classifier() -> str:
     """Flat список продуктів для inject у classifier prompt.
     Допомагає classifier'у зрозуміти що «Refining cleanser» це наш ESSE-продукт,
