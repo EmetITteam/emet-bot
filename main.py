@@ -1150,13 +1150,17 @@ def _normalize_query(query: str) -> str:
 
 
 def _search_with_score(vdb, query, k, threshold=RAG_SCORE_THRESHOLD):
-    """Search with score logging and optional filtering."""
+    """Search with score logging and optional filtering.
+    Логування exact embedding input (короткий хеш) — для debug determinism issues."""
+    import hashlib
+    q_hash = hashlib.md5(query.encode("utf-8", errors="replace")).hexdigest()[:8]
     try:
         results = vdb.similarity_search_with_score(query, k=k)
         if results:
             scores = [score for _, score in results]
-            logger.debug("RAG scores: min=%.3f max=%.3f avg=%.3f query=%s",
-                        min(scores), max(scores), sum(scores)/len(scores), query[:50])
+            top_doc_hash = hashlib.md5((results[0][0].page_content or "").encode("utf-8", errors="replace")).hexdigest()[:8]
+            logger.info("RAG q_hash=%s k=%d top_score=%.3f top_doc=%s scores_avg=%.3f",
+                        q_hash, k, min(scores), top_doc_hash, sum(scores)/len(scores))
         return [doc for doc, score in results if score < threshold]
     except Exception:
         return vdb.similarity_search(query, k=k)
