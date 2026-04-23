@@ -1664,8 +1664,24 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
             _conf
         )
 
-        # Knowledge gap detector: якщо менеджер виправив бота — фіксуємо для медвідділу
-        if _intent == "correction" and chat_history:
+        # Correction subtype detection (Fix #5):
+        # Розрізняємо «correction-as-fact-fix» (менеджер виправляє факт боту, треба анти-сикофансі)
+        # від «correction-as-bot-retry» (скарга на неповну попередню відповідь — треба переробити).
+        _is_bot_retry_request = False
+        if _intent == "correction":
+            _retry_markers = [
+                "чому ти не", "чому не", "ти не сказав", "ти не зазначив", "ти не показав",
+                "не повністю", "уточни", "перепитую", "повтори", "я задала питання",
+                "ти не відповів", "пропустив", "не зрозумів",
+            ]
+            _text_low = text.lower()
+            _is_bot_retry_request = any(m in _text_low for m in _retry_markers)
+            if _is_bot_retry_request:
+                logger.info("CORRECTION subtype = bot_retry_request (skarga on incomplete answer)")
+
+        # Knowledge gap detector — пишемо ТІЛЬКИ для fact-fix correction, не для retry-requests
+        # (retry — це не дірка в RAG, це питання яке бот міг відповісти краще)
+        if _intent == "correction" and chat_history and not _is_bot_retry_request:
             log_knowledge_gap(
                 message.from_user.id,
                 message.from_user.username or f"id{message.from_user.id}",
@@ -1680,12 +1696,32 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
             _state_data_for_ds = await state.get_data()
             _prev_dialog_state = _state_data_for_ds.get("dialog_state") or {}
             _curr_dialog_state = compute_state(_classifier_result, _prev_dialog_state, text)
-            if should_reset_history(_prev_dialog_state, _curr_dialog_state):
+            # bot_retry — DialogState-protected: НЕ скидати chat_history, бо retry потребує
+            # доступу до попередньої bot turn щоб переосмислити її (architect recommendation)
+            if not _is_bot_retry_request and should_reset_history(_prev_dialog_state, _curr_dialog_state):
                 logger.info("DialogState: topic shift detected, resetting chat_history (was %d msgs)", len(chat_history))
                 chat_history = []
             await state.update_data(dialog_state=_curr_dialog_state)
         except Exception as _ds_err:
             logger.warning("dialog_state error: %s", _ds_err)
+
+        # Bot retry: підвантажуємо попередню bot turn у контекст і додаємо retry-інструкцію
+        # для system prompt. Це закриває кейси типу #741 («Чому ти одразу не зазначив...»)
+        if _is_bot_retry_request:
+            _prev_bot_answer = ""
+            for _h in reversed(chat_history):
+                if _h.get("role") == "assistant":
+                    _prev_bot_answer = (_h.get("content") or "")[:1500]
+                    break
+            if _prev_bot_answer:
+                # Додаємо retry-інструкцію перед обробкою — піде в system prompt LLM
+                text = (
+                    f"{text}\n\n[BOT_RETRY_CONTEXT: Менеджер незадоволений твоєю попередньою "
+                    f"відповіддю. Прочитай її уважно, зрозумій що пропустив, дай ширшу і конкретнішу "
+                    f"відповідь зараз — НЕ оцінюй менеджера, НЕ давай SOS-формат. Просто повніша інфа.]\n\n"
+                    f"ПОПЕРЕДНЯ ТВОЯ ВІДПОВІДЬ:\n{_prev_bot_answer}"
+                )
+                logger.info("CORRECTION+retry: enriched user_text with prev bot turn (%d chars)", len(_prev_bot_answer))
 
         # Differential diagnosis: при низькій впевненості класифікатора — ставимо уточнююче питання
         # замість того щоб вгадувати і дати неправильну відповідь
