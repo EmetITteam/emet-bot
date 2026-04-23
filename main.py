@@ -3944,6 +3944,32 @@ async def daily_quality_task():
                 logger.info("Quality report: no dialogs found")
             with open(marker, "w") as mf:
                 mf.write("sent")
+
+            # Алерт: менеджери з >2 виправленнями за останні 24 год — потенційний пробіл у RAG/промпті
+            try:
+                heavy_correctors = db.query_dict(
+                    "SELECT user_id, username, COUNT(*) AS corrections FROM knowledge_gaps "
+                    "WHERE detected_at >= NOW() - INTERVAL '24 hours' "
+                    "GROUP BY user_id, username HAVING COUNT(*) > 2 "
+                    "ORDER BY corrections DESC"
+                )
+                if heavy_correctors and ADMIN_ID:
+                    lines = "\n".join(
+                        f"  • @{r.get('username') or r['user_id']}: *{r['corrections']}* виправлень"
+                        for r in heavy_correctors
+                    )
+                    await bot.send_message(
+                        ADMIN_ID,
+                        f"⚠️ *EMET: бот регулярно помиляється*\n\n"
+                        f"За останні 24 год менеджери виправляли бота >2 разів:\n{lines}\n\n"
+                        f"Перевір [Пробіли знань](https://adminbot.emet.ua/gaps?status=open) — "
+                        f"можливо в RAG/промпті системна діра.",
+                        parse_mode="Markdown",
+                        disable_web_page_preview=True
+                    )
+                    logger.info("Heavy correctors alert sent: %d users", len(heavy_correctors))
+            except Exception as e_corr:
+                logger.error("heavy_correctors check error: %s", e_corr)
         except Exception as e:
             logger.error("Quality monitor error: %s", e)
             # Still mark to prevent loop
