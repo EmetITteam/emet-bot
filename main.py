@@ -873,16 +873,20 @@ def _extract_docs(docs):
         name = doc.metadata.get("source", "Невідомий документ")
         url = doc.metadata.get("url", "")
         file_id = doc.metadata.get("file_id", "")
+        scope = doc.metadata.get("scope", "")
+        product_canonical = doc.metadata.get("product_canonical", "")
         content = doc.page_content
         # Sanitize: strip known prompt injection patterns from indexed documents
         if _INJECTION_PATTERNS.search(content):
             content = _INJECTION_PATTERNS.sub("[FILTERED]", content)
             logger.warning("Prompt injection pattern detected in doc '%s'", name[:60])
-        if name not in grouped_docs:
-            grouped_docs[name] = {"url": url, "file_id": file_id, "content": []}
-        grouped_docs[name]["content"].append(content)
+        # group by name+scope, щоб scope-маркер потрапив у заголовок групи
+        key = (name, scope, product_canonical)
+        if key not in grouped_docs:
+            grouped_docs[key] = {"url": url, "file_id": file_id, "content": []}
+        grouped_docs[key]["content"].append(content)
 
-    for i, (name, data) in enumerate(grouped_docs.items(), 1):
+    for i, ((name, scope, product_canonical), data) in enumerate(grouped_docs.items(), 1):
         doc_id = f"REF{i}"
         full_content = "\n".join(data["content"])
         # Mark competitor docs so LLM doesn't confuse their data with our products
@@ -890,7 +894,16 @@ def _extract_docs(docs):
         is_competitor = "competitor" in _name_l or "competitir" in _name_l or "_master." in _name_l or "competitors_" in _name_l
         label = f"⚠️ КОНКУРЕНТ (чужі дані, НЕ наш продукт)" if is_competitor else ""
         lms_label = "📘 НАВЧАЛЬНИЙ КУРС EMET" if "[LMS]" in name else ""
-        tag = lms_label or label
+        # SCOPE мітка — попереджає модель що це загальна інфа про лінію
+        scope_label = ""
+        if scope == "line":
+            scope_label = "🌐 SCOPE=LINE (характеристика лінії в цілому, НЕ конкретного продукту)"
+        elif scope == "ingredient":
+            scope_label = "🧪 SCOPE=INGREDIENT (про окремий компонент)"
+        elif scope == "protocol":
+            scope_label = "📋 SCOPE=PROTOCOL"
+        tag_parts = [t for t in [lms_label, label, scope_label] if t]
+        tag = " | ".join(tag_parts)
         header = f"=== ИСТОЧНИК: {doc_id} | {tag} | {name} ===" if tag else f"=== ИСТОЧНИК: {doc_id} | {name} ==="
         context_text += f"{header}\n{full_content}\n\n"
         sources[doc_id] = {"name": name, "url": data["url"], "file_id": data.get("file_id", "")}

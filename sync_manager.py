@@ -321,15 +321,51 @@ def _split_coach_to_products_competitors():
             return "IUSE"
         return None
 
+    def _detect_scope(doc):
+        """Визначає рівень специфічності чанка: line / product / ingredient / protocol.
+        line — загальні характеристики лінії (часто одночасна згадка >=2 продуктів того ж бренду без фокусу)
+        product — конкретний продукт (одна назва домінує)
+        ingredient — про окремий компонент (PLLA, PDRN, PCL...)
+        protocol — про процедуру / схему / комбо
+        """
+        src = (doc.metadata.get("source", "") or "").lower()
+        text = (doc.page_content or "").lower()
+        # protocol — за source або тексту
+        if any(k in src for k in ["комбін", "протокол", "combo", "protokol"]):
+            return "protocol"
+        if any(k in text[:200] for k in ["протокол", "розведення", "схема процедур", "техніка"]):
+            return "protocol"
+        # ingredient — пояснення про компонент окремо
+        if any(k in text[:300] for k in [" plla ", "поліl-молочна", "поликапролак", "пдрн", " pdrn ",
+                                          " pcl ", "поликапролактон", "гіалуронова кислот", "hyaluronic"]):
+            if not any(p in text[:100] for p in ["petaran", "петаран", "ellans", "елансе", "vitaran", "вітаран",
+                                                   "neuramis", "нейрамис", "iuse"]):
+                return "ingredient"
+        # line — згадка >=2 продуктів того самого бренду / lineup keywords
+        line_markers = [
+            ("esse", ["sensitive", "sensitive plus", "core", "professional", "лінійка esse", "лінія esse",
+                      "пробіотична космецевтика", "лінійки", "асортимент"]),
+            ("vitaran", ["лінійка vitaran", "лінія vitaran", "all variants", "усі варіанти"]),
+            ("iuse", ["лінійка iuse", "лінія iuse", "skinbooster і hair", "колаген і hair"]),
+        ]
+        for brand, markers in line_markers:
+            if brand in text[:400] and any(m in text[:400] for m in markers):
+                return "line"
+        # default
+        return "product"
+
     for d in products + competitors:
         canonical = _detect_product_canonical(d)
         if canonical:
             d.metadata["product_canonical"] = canonical
+        d.metadata["scope"] = _detect_scope(d)
 
-    # Лог розподілу по продуктам
+    # Лог розподілу по продуктам + scope
     from collections import Counter
     prod_dist = Counter(d.metadata.get("product_canonical", "UNKNOWN") for d in products)
+    scope_dist = Counter(d.metadata.get("scope", "?") for d in products + competitors)
     print(f"  [split] products by canonical: {dict(prod_dist.most_common())}")
+    print(f"  [split] scope distribution: {dict(scope_dist.most_common())}")
 
     # Rebuild both indices
     counts = {}
