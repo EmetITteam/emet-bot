@@ -28,6 +28,8 @@ EMET_PRODUCTS = [
     # Космецевтика
     "Vitaran Skin Healer", "Vitaran Dual Serum",
     "Vitaran Azulene Serum", "Vitaran Sleeping Cream",
+    "ESSE",  # сам бренд як одне слово — для запитів типу "засіб ESSE", "лінія ESSE"
+    "Esse",
     # Нутрієнти
     "IUSE Collagen Marine Beauty", "IUSE Collagen",
     "IUSE Hair Regrowth", "IUSE HAIR",
