@@ -1119,15 +1119,34 @@ _QUERY_NORMALIZE = {
 }
 
 def _normalize_query(query: str) -> str:
-    """Enrich query with canonical product names for better RAG matching."""
-    q_lower = query.lower()
+    """Enrich query with canonical product names for better RAG matching.
+    Поєднує legacy _QUERY_NORMALIZE з aliases.expand_query (UA→EN транслітерація).
+    NFKC нормалізація + lowercase + collapse whitespace для детермінованого embedding."""
+    import unicodedata, re
+    if not query:
+        return query
+    # NFKC normalize + collapse whitespace
+    q_normalized = unicodedata.normalize("NFKC", query).strip()
+    q_normalized = re.sub(r"\s+", " ", q_normalized)
+    q_lower = q_normalized.lower()
     additions = []
     for trigger, canonical in _QUERY_NORMALIZE.items():
-        if trigger in q_lower:
+        if trigger in q_lower and canonical.lower() not in q_lower:
             additions.append(canonical)
-    if additions:
-        return query + " " + " ".join(additions)
-    return query
+    # ALIAS_MAP — UA транслітерація → EN canonical (з aliases.py)
+    try:
+        from aliases import ALIAS_MAP
+        for ua_alias, en_canonical in ALIAS_MAP.items():
+            if ua_alias in q_lower and en_canonical.lower() not in q_lower:
+                additions.append(en_canonical)
+    except Exception:
+        pass
+    # Унікальні додавання (зберігаючи порядок)
+    seen = set()
+    unique = [a for a in additions if not (a in seen or seen.add(a))]
+    if unique:
+        return q_normalized + " " + " ".join(unique)
+    return q_normalized
 
 
 def _search_with_score(vdb, query, k, threshold=RAG_SCORE_THRESHOLD):

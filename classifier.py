@@ -217,6 +217,14 @@ i, iII, Whitening, Tox, Skin Healer
 - "конкуренти X" / "що можна протиставити X" → info_comparison
   (це запит менеджера ПОРІВНЯТИ/ОТРИМАТИ СПИСОК конкурентів, НЕ заперечення лікаря!)
 
+## ВІДОМІ ПРОДУКТИ EMET (для розпізнавання)
+
+{{KNOWN_PRODUCTS_BLOCK}}
+
+⚠️ Якщо в запиті є будь-яка з цих назв (UA-транслітерація або EN-canonical) →
+primary_product = відповідний канонічний продукт. НЕ виводь out_of_scope для запитів
+з явною назвою продукту EMET.
+
 ## ФОРМАТ ВІДПОВІДІ (ТІЛЬКИ валідний JSON):
 
 ```json
@@ -287,6 +295,14 @@ async def classify(client: AsyncOpenAI, query: str, chat_history: list[dict] = N
 
     user_message = f"{history_text}ПОТОЧНИЙ ЗАПИТ МЕНЕДЖЕРА:\n{query}"
 
+    # Інжектимо актуальний список відомих продуктів у CLASSIFIER_PROMPT
+    try:
+        from aliases import get_known_products_for_classifier
+        _known_products = get_known_products_for_classifier()
+    except Exception:
+        _known_products = ""
+    _system_prompt = CLASSIFIER_PROMPT.replace("{{KNOWN_PRODUCTS_BLOCK}}", _known_products)
+
     try:
         response = await client.chat.completions.create(
             model=model,
@@ -295,7 +311,7 @@ async def classify(client: AsyncOpenAI, query: str, chat_history: list[dict] = N
             max_tokens=300,
             response_format={"type": "json_object"},
             messages=[
-                {"role": "system", "content": CLASSIFIER_PROMPT},
+                {"role": "system", "content": _system_prompt},
                 {"role": "user", "content": user_message}
             ]
         )
