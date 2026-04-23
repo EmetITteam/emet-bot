@@ -127,8 +127,9 @@ RATE_LIMIT_WINDOW = 60  # seconds
 DAILY_LIMIT_PER_USER = int(os.getenv("DAILY_LIMIT_PER_USER", "50"))  # cost/abuse cap
 
 def check_rate_limit(user_id: int) -> tuple[bool, str | None]:
-    """Returns (allowed, reason). reason='burst' або 'daily' при відмові."""
-    if user_id == ADMIN_ID:
+    """Returns (allowed, reason). reason='burst' або 'daily' при відмові.
+    Адміни (ADMIN_ID або users.role='admin') не обмежуються."""
+    if is_admin(user_id):
         return True, None
     # Burst — sliding 60s
     now = time.monotonic()
