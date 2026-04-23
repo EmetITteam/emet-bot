@@ -160,6 +160,8 @@ i, iII, Whitening, Tox, Skin Healer
 
 **Клінічні (categorize them correctly, NOT as objection):**
 - "чому пече/болить/набряк" → clinical_side_effect (НЕ objection! скарга/побічка)
+- "які побічні дії X" / "побічна реакція" / "ускладнення" / "побічні ефекти препарату" → clinical_side_effect
+  (інформаційний запит про побічки теж сюди — щоб бот направив до медвідділу, а не сам пояснював)
 - "чому безболісний / менш болючий / за рахунок чого працює" → clinical_why (ПОЗИТИВНЕ питання, не скарга)
 - "не бачу результату" → clinical_no_result
 - "можна при вагітності" → clinical_contraindication
