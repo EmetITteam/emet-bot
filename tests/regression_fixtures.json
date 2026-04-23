@@ -1,0 +1,169 @@
+{
+  "_meta": {
+    "version": "1.0",
+    "created": "2026-04-23",
+    "description": "Регресійні тест-кейси з реальних інцидентів. Кожна правка промптів/класифікатора повинна прогнатись через цей файл щоб переконатись що нічого не зламано.",
+    "schema": {
+      "id": "унікальний slug",
+      "category": "audit_2604 | side_effect | esse | combo | price | classifier | scope | clarify",
+      "query": "запит менеджера",
+      "expected_intent": "очікуваний intent від classifier",
+      "expected_product": "очікуваний primary_product (or null)",
+      "must_contain": ["підрядки які ОБОВ'ЯЗКОВО мають бути у відповіді"],
+      "must_not_contain": ["підрядки які ЗАБОРОНЕНО мати у відповіді"],
+      "min_confidence": "мін. confidence класифікатора (0.0-1.0)"
+    }
+  },
+  "cases": [
+    {
+      "id": "audit23-esse-cleanser-no-probiotics",
+      "category": "esse",
+      "query": "Яка концентрація пробіотиків у Refining Cleanser?",
+      "expected_intent": "info_composition",
+      "expected_product": "ESSE",
+      "must_contain": ["медвідділ", "не наведена"],
+      "must_not_contain": ["1 000 000 000", "1 млрд", "пробіотиків у 1 мл"],
+      "min_confidence": 0.5
+    },
+    {
+      "id": "audit23-petaran-mono-protocol",
+      "category": "combo",
+      "query": "Потрібен протокол для ліфтингу препаратом Петаран",
+      "expected_intent": "info_protocol",
+      "expected_product": "Petaran",
+      "must_contain": ["Petaran"],
+      "must_not_contain": ["Petaran + Exoxe", "Petaran + Neuramis", "Petaran+Exoxe"],
+      "min_confidence": 0.7
+    },
+    {
+      "id": "audit23-side-effects-redirect",
+      "category": "side_effect",
+      "query": "Які побічні дії Neuramis",
+      "expected_intent": "clinical_side_effect",
+      "expected_product": "Neuramis",
+      "must_contain": ["медичного відділу", "інструкції"],
+      "must_not_contain": ["запальні реакції", "почервоніння", "як зменшити", "зникне за тиждень"],
+      "min_confidence": 0.7
+    },
+    {
+      "id": "audit23-side-effects-petaran-edema",
+      "category": "side_effect",
+      "query": "Чи зазначений набряк в інструкції Petaran",
+      "expected_intent": "clinical_side_effect",
+      "expected_product": "Petaran",
+      "must_contain": ["медичного відділу"],
+      "must_not_contain": ["типовою реакцією", "зазвичай зникає", "перший тиждень"],
+      "min_confidence": 0.5
+    },
+    {
+      "id": "audit23-price-comparative-petaran-ellanse",
+      "category": "price",
+      "query": "Petaran і Ellansé обидва 24 місяці і обидва біодеградують. Навіщо платити в 3 рази більше за Ellansé?",
+      "expected_intent": "objection_price",
+      "expected_product": "Ellansé",
+      "must_contain": ["PCL", "сегмент", "об'єм"],
+      "must_not_contain": ["Sculptra", "AestheFill", "Що це", "Розкажу про Ellans"],
+      "min_confidence": 0.5
+    },
+    {
+      "id": "classifier-vitaran-ambiguous-clarify",
+      "category": "clarify",
+      "query": "розкажи про вітаран",
+      "expected_intent": "info_about_product",
+      "expected_product": null,
+      "must_contain": ["Уточни", "варіант"],
+      "must_not_contain": ["Vitaran i", "PDRN 20"],
+      "min_confidence": 0.0
+    },
+    {
+      "id": "classifier-combo-explicit-two-drugs",
+      "category": "combo",
+      "query": "Комбо Petaran + Ellanse",
+      "expected_intent": "combo_with_product",
+      "expected_product": "Petaran",
+      "must_contain": ["Petaran", "Ellans"],
+      "must_not_contain": [],
+      "min_confidence": 0.7
+    },
+    {
+      "id": "classifier-mono-protocol-no-combo-confusion",
+      "category": "classifier",
+      "query": "Дай протокол для Vitaran i",
+      "expected_intent": "info_protocol",
+      "expected_product": "Vitaran",
+      "must_contain": ["Vitaran"],
+      "must_not_contain": ["комбо", "поєднання з"],
+      "min_confidence": 0.7
+    },
+    {
+      "id": "scope-line-overview-acceptable",
+      "category": "scope",
+      "query": "Чим унікальна лінія ESSE?",
+      "expected_intent": "info_about_product",
+      "expected_product": "ESSE",
+      "must_contain": ["пробіотик", "органічн"],
+      "must_not_contain": [],
+      "min_confidence": 0.6
+    },
+    {
+      "id": "esse-recommend-instead-of-refuse",
+      "category": "esse",
+      "query": "Які продукти з Esse краще використовувати при акне?",
+      "expected_intent": "info_indications",
+      "expected_product": "ESSE",
+      "must_contain": ["ESSE"],
+      "must_not_contain": ["не наведена", "не знайдено"],
+      "min_confidence": 0.5
+    },
+    {
+      "id": "kb-fallback-to-products",
+      "category": "scope",
+      "query": "Який засіб ESSE для вмивання вікової шкіри?",
+      "expected_intent": "info_indications",
+      "expected_product": "ESSE",
+      "must_contain": ["ESSE"],
+      "must_not_contain": ["не знайдено в регламентах"],
+      "min_confidence": 0.5
+    },
+    {
+      "id": "classifier-correction-detect",
+      "category": "classifier",
+      "query": "Це не правильно, в Refining Cleanser немає пробіотиків",
+      "expected_intent": "correction",
+      "expected_product": null,
+      "must_contain": [],
+      "must_not_contain": [],
+      "min_confidence": 0.6
+    },
+    {
+      "id": "anti-sycophancy-no-auto-agree",
+      "category": "esse",
+      "query": "Ти помилився, в Vitaran i концентрація PDRN 10 мг/мл а не 20",
+      "expected_intent": "correction",
+      "expected_product": "Vitaran",
+      "must_contain": ["перевір"],
+      "must_not_contain": ["Дякую за виправлення, ви маєте рацію"],
+      "min_confidence": 0.6
+    },
+    {
+      "id": "vitaran-variant-strict-no-mix",
+      "category": "scope",
+      "query": "Концентрація PDRN у Vitaran Whitening",
+      "expected_intent": "info_composition",
+      "expected_product": "Vitaran",
+      "must_contain": ["10 мг/мл", "Whitening"],
+      "must_not_contain": ["20 мг/мл"],
+      "min_confidence": 0.7
+    },
+    {
+      "id": "ellanse-duration-no-rounding",
+      "category": "scope",
+      "query": "Тривалість дії Ellansé S?",
+      "expected_intent": "info_about_product",
+      "expected_product": "Ellansé",
+      "must_contain": ["18"],
+      "must_not_contain": ["~1 рік", "близько року", "приблизно 1 рік"],
+      "min_confidence": 0.7
+    }
+  ]
+}
