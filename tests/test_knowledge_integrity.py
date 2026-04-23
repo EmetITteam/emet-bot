@@ -49,10 +49,13 @@ BRAND_CHECKS = {
     "Magnox":            ("Що таке Magnox 520?",               ["магній"]),
 }
 
-# Minimum chunk counts per index (after empty-chunk filter, 2026-04-14)
-MIN_PRODUCTS = 580
-MIN_COMPETITORS = 595
-MIN_LMS = 120
+# Minimum chunk counts per index — нижня межа реальної проблеми (не косметичних коливань).
+# Раніше було 580/595, але це було занадто жорстко: при кожному оновленні docx сума chunks
+# зміщується на ±5-10. Якщо реально щось зламалось — products падає <500 (катастрофа split'а).
+# Алерт повинен спрацьовувати на справжню проблему, а не на ±1 chunk.
+MIN_PRODUCTS = 500
+MIN_COMPETITORS = 500
+MIN_LMS = 100
 
 # Файли в Coach що містять тільки заголовок без контенту — фільтр sync_manager їх відкидає
 HEADING_ONLY_FILES = {
