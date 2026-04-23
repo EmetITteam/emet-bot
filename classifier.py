@@ -315,14 +315,16 @@ async def classify(client: AsyncOpenAI, query: str, chat_history: list[dict] = N
         from aliases import detect_products_in_text, map_to_canonical_brand
         words_count = len(query.strip().split())
         detected = detect_products_in_text(query)
-        if detected and words_count <= 5:
-            # Маппимо detected products на canonical brand для classifier
+        if detected:
+            # Hint завжди коли є detection (раніше було words<=5 — пропускало 6+ слів запити)
             canonical_brand = map_to_canonical_brand(detected[0])
+            short_hint = "Запит короткий — навігація про продукт." if words_count <= 5 else "Запит містить явну назву продукту."
             hint_block = (
                 f"\n\n💡 АВТО-ДЕТЕКЦІЯ: у запиті явно знайдено продукти EMET: {detected[:3]}.\n"
                 f"Канонічний бренд: *{canonical_brand}* — ВИСТАВ примусово primary_product=\"{canonical_brand}\".\n"
-                f"Запит короткий ({words_count} слів) — це навігаційний запит про продукт.\n"
-                f"Intent зазвичай info_about_product (якщо нема явного питання про склад/протокол/протипоказ).\n"
+                f"{short_hint}\n"
+                f"Якщо запит про показання → info_indications. Про склад → info_composition.\n"
+                f"Про протипоказ → clinical_contraindication. Інакше — info_about_product.\n"
                 f"⛔ НЕ повертай out_of_scope. ⛔ НЕ виставляй primary_product=null.\n"
             )
     except Exception:
