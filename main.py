@@ -1177,16 +1177,35 @@ def get_context(query: str, mode: str = "kb", provider: str = "openai", has_comp
         vdb = _get_vdb("kb", provider)
         docs = _search_with_score(vdb, normalized_query, RAG_K_DEFAULT)
         context_text, sources = _extract_docs(docs)
-        # KB→Coach fallback: якщо в регламентах нічого не знайшли (або занадто мало),
-        # для KB-режиму спробувати продуктовий індекс — менеджеру не треба перемикати режим.
-        if mode == "kb" and len(context_text.strip()) < 200:
-            logger.info("KB context weak (%d chars), fallback to products RAG: %r", len(context_text.strip()), query[:80])
-            vdb_p = _get_vdb("products", provider)
-            docs_p = _search_with_score(vdb_p, normalized_query, RAG_K_DEFAULT)
-            if docs_p:
-                ctx_p, src_p = _extract_docs(docs_p)
-                if len(ctx_p.strip()) > len(context_text.strip()):
-                    return ctx_p, src_p
+        # KB→Coach smart fallback (per agent review):
+        # Замість char-length — перевіряти чи RAW query містить явну назву продукту EMET
+        # AND чи в KB chunks нема product_canonical (= справжня нерелевантність).
+        # Це робастніше: defense in depth — fallback навіть якщо classifier missed product.
+        if mode == "kb":
+            try:
+                from aliases import detect_products_in_text
+                products_in_query = detect_products_in_text(query)
+                # Перевіряємо чи KB-чанки взагалі містять згадку наших продуктів у metadata
+                kb_has_product = any(d.metadata.get("product_canonical") for d in docs)
+                # Fallback тригер: запит про продукт + KB не повернув жоден product chunk
+                if products_in_query and not kb_has_product:
+                    logger.info("KB→Coach fallback: query has products %s but KB chunks lack product_canonical",
+                                 products_in_query[:3])
+                    vdb_p = _get_vdb("products", provider)
+                    docs_p = _search_with_score(vdb_p, normalized_query, RAG_K_DEFAULT)
+                    if docs_p:
+                        return _extract_docs(docs_p)
+            except Exception as e:
+                logger.warning("KB fallback detect_products error: %s", e)
+            # Legacy fallback (char-length) — як safety net якщо detect нічого не знайшов
+            if len(context_text.strip()) < 200:
+                logger.info("KB context weak (%d chars), fallback to products RAG: %r", len(context_text.strip()), query[:80])
+                vdb_p = _get_vdb("products", provider)
+                docs_p = _search_with_score(vdb_p, normalized_query, RAG_K_DEFAULT)
+                if docs_p:
+                    ctx_p, src_p = _extract_docs(docs_p)
+                    if len(ctx_p.strip()) > len(context_text.strip()):
+                        return ctx_p, src_p
         return context_text, sources
 
     if mode == "combo":
