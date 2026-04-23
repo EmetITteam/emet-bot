@@ -164,6 +164,66 @@
       "must_contain": ["18"],
       "must_not_contain": ["~1 рік", "близько року", "приблизно 1 рік"],
       "min_confidence": 0.7
+    },
+    {
+      "id": "fix4-short-product-query-refining",
+      "category": "classifier",
+      "query": "Refining cleanser",
+      "expected_intent": "info_about_product",
+      "expected_product": "ESSE",
+      "must_contain": [],
+      "must_not_contain": [],
+      "min_confidence": 0.5
+    },
+    {
+      "id": "fix4-short-product-query-intensity",
+      "category": "classifier",
+      "query": "Інтенсіті серум Ессе",
+      "expected_intent": "info_about_product",
+      "expected_product": "ESSE",
+      "must_contain": [],
+      "must_not_contain": [],
+      "min_confidence": 0.5
+    },
+    {
+      "id": "fix5-bot-retry-not-evaluate",
+      "category": "classifier",
+      "query": "Чому ти одразу не зазначив цей засіб?",
+      "expected_intent": "correction",
+      "expected_product": null,
+      "must_contain": [],
+      "must_not_contain": [],
+      "min_confidence": 0.5
+    },
+    {
+      "id": "fix5-bot-retry-i-asked-question",
+      "category": "classifier",
+      "query": "Я задала питання",
+      "expected_intent": "correction",
+      "expected_product": null,
+      "must_contain": [],
+      "must_not_contain": [],
+      "min_confidence": 0.4
+    },
+    {
+      "id": "fix7-conf-fallback-product-detected",
+      "category": "scope",
+      "query": "Refining cleanser що це",
+      "expected_intent": "info_about_product",
+      "expected_product": "ESSE",
+      "must_contain": [],
+      "must_not_contain": [],
+      "min_confidence": 0.4
+    },
+    {
+      "id": "fix1-ua-translit-vitaran-tox",
+      "category": "classifier",
+      "query": "Як працює тохтай",
+      "expected_intent": "info_about_product",
+      "expected_product": "Vitaran",
+      "must_contain": [],
+      "must_not_contain": [],
+      "min_confidence": 0.5
     }
   ]
 }
