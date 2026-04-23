@@ -1622,6 +1622,19 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
                 product_hint=_full_product
             )
 
+        # DialogState — мінімальний state-tracker для скиду chat_history при зміні теми + comparison context
+        try:
+            from dialog_state import compute_state, should_reset_history
+            _state_data_for_ds = await state.get_data()
+            _prev_dialog_state = _state_data_for_ds.get("dialog_state") or {}
+            _curr_dialog_state = compute_state(_classifier_result, _prev_dialog_state, text)
+            if should_reset_history(_prev_dialog_state, _curr_dialog_state):
+                logger.info("DialogState: topic shift detected, resetting chat_history (was %d msgs)", len(chat_history))
+                chat_history = []
+            await state.update_data(dialog_state=_curr_dialog_state)
+        except Exception as _ds_err:
+            logger.warning("dialog_state error: %s", _ds_err)
+
         # Ультракороткі запити-заперечення (context leak захист)
         _short_objection_words = {
             "дорого", "дорогий", "дорогі", "дороге",
