@@ -430,6 +430,23 @@ def init_db():
                  cost_usd NUMERIC(8,2),
                  created_at TIMESTAMP DEFAULT NOW())''')
 
+            # Пробіли знань — запити на які бот не зміг відповісти правильно,
+            # менеджер виправив. Потрібно поповнити базу.
+            cur.execute('''CREATE TABLE IF NOT EXISTS knowledge_gaps
+                (id SERIAL PRIMARY KEY,
+                 dialog_id INTEGER,
+                 user_id TEXT,
+                 username TEXT,
+                 question TEXT,
+                 bot_answer TEXT,
+                 user_correction TEXT,
+                 product_hint TEXT,
+                 status TEXT DEFAULT 'open',
+                 med_dept_response TEXT,
+                 detected_at TIMESTAMP DEFAULT NOW(),
+                 resolved_at TIMESTAMP)''')
+            cur.execute("CREATE INDEX IF NOT EXISTS idx_knowledge_gaps_status ON knowledge_gaps(status, detected_at DESC)")
+
 
 def _load_chat_history_db(user_id: int) -> list:
     """Завантажує останню історію діалогу з БД (fallback при рестарті)."""
@@ -680,6 +697,33 @@ def log_to_db(user_id, username, mode, ai_engine, question, answer, has_source, 
     except Exception as e:
         logger.error("log DB write error: %s", e)
         return 0
+
+
+def log_knowledge_gap(user_id, username, correction_text, chat_history, product_hint=None):
+    """Фіксує пробіл знань: менеджер виправив бота → запит для медвідділу.
+    Шукає попередній bot answer + question у chat_history.
+    Тиха функція — не падає при помилці."""
+    try:
+        prev_q = ""
+        prev_a = ""
+        # chat_history в форматі [{role: user, content: ...}, {role: assistant, content: ...}, ...]
+        # шукаємо останню пару user→assistant ПЕРЕД поточним повідомленням
+        for i in range(len(chat_history) - 1, -1, -1):
+            if chat_history[i].get("role") == "assistant":
+                prev_a = chat_history[i].get("content", "")[:2000]
+                if i > 0 and chat_history[i-1].get("role") == "user":
+                    prev_q = chat_history[i-1].get("content", "")[:1000]
+                break
+        if not prev_a:
+            return  # нема що фіксувати
+        db.execute(
+            "INSERT INTO knowledge_gaps (user_id, username, question, bot_answer, user_correction, product_hint, status) "
+            "VALUES (%s,%s,%s,%s,%s,%s,'open')",
+            (str(user_id), username or "", prev_q, prev_a, correction_text[:1000], product_hint or "")
+        )
+        logger.info("knowledge_gap logged uid=%s product=%s", user_id, product_hint)
+    except Exception as e:
+        logger.error("log_knowledge_gap error: %s", e)
 
 
 def save_course(title, json_data):
@@ -1542,6 +1586,16 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
             _classifier_result.get("needs_verbatim"),
             _conf
         )
+
+        # Knowledge gap detector: якщо менеджер виправив бота — фіксуємо для медвідділу
+        if _intent == "correction" and chat_history:
+            log_knowledge_gap(
+                message.from_user.id,
+                message.from_user.username or f"id{message.from_user.id}",
+                text,
+                chat_history,
+                product_hint=_full_product
+            )
 
         # Ультракороткі запити-заперечення (context leak захист)
         _short_objection_words = {

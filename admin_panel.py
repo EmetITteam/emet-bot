@@ -471,8 +471,13 @@ BASE_HTML = """
       </a>
       <div class="nav-sep"></div>
       <a href="/quality" class="nav-item {{ 'active' if active=='quality' }}">
-        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="8" y1="11" x2="14" y2="11"/><line x1="11" y1="8" x2="11" y2="14"/></svg>
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/><line x1="8" y1="11" x2="16.65" y2="16.65"/><line x1="8" y1="11" x2="14" y2="11"/><line x1="11" y1="8" x2="11" y2="14"/></svg>
         Якiсть
+      </a>
+      <a href="/gaps" class="nav-item {{ 'active' if active=='gaps' }}" style="position:relative">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+        Пробiли знань
+        {% if gaps_open_count and gaps_open_count > 0 %}<span style="margin-left:auto;background:#ef4444;color:#fff;font-size:11px;padding:1px 7px;border-radius:10px;font-weight:600">{{ gaps_open_count }}</span>{% endif %}
       </a>
       <a href="/digest" class="nav-item {{ 'active' if active=='digest' }}">
         <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 4h16c1.1 0 2 .9 2 2v12c0 1.1-.9 2-2 2H4c-1.1 0-2-.9-2-2V6c0-1.1.9-2 2-2z"/><polyline points="22,6 12,13 2,6"/></svg>
@@ -552,10 +557,17 @@ LOGIN_HTML = """
 
 def render_page(content_html, active=""):
     from flask import render_template_string
+    # Скільки відкритих пробілів знань — для бейджа в навігації
+    try:
+        gaps_open = db_query("SELECT COUNT(*) AS c FROM knowledge_gaps WHERE status='open'", fetchone=True)
+        gaps_open_count = gaps_open["c"] if gaps_open else 0
+    except Exception:
+        gaps_open_count = 0
     return render_template_string(
         BASE_HTML,
         content=content_html,
-        active=active
+        active=active,
+        gaps_open_count=gaps_open_count
     )
 
 
@@ -2162,6 +2174,134 @@ def digest_send():
     threading.Thread(target=_send_digest_now, daemon=True).start()
     flash("Дайджест відправлено в Telegram адміністраторам і директорам.", "success")
     return redirect(url_for("digest_page"))
+
+
+@app.route("/gaps", methods=["GET"])
+@login_required
+def gaps_page():
+    """Пробіли знань — запити які бот не зміг правильно відповісти."""
+    status_filter = (request.args.get("status") or "open").strip()
+    if status_filter not in ("open", "filled", "dismissed", "all"):
+        status_filter = "open"
+    try:
+        if status_filter == "all":
+            rows = db_query(
+                "SELECT id, dialog_id, user_id, username, question, bot_answer, user_correction, "
+                "product_hint, status, med_dept_response, detected_at, resolved_at "
+                "FROM knowledge_gaps ORDER BY detected_at DESC LIMIT 200"
+            )
+        else:
+            rows = db_query(
+                "SELECT id, dialog_id, user_id, username, question, bot_answer, user_correction, "
+                "product_hint, status, med_dept_response, detected_at, resolved_at "
+                "FROM knowledge_gaps WHERE status=%s ORDER BY detected_at DESC LIMIT 200",
+                (status_filter,)
+            )
+    except Exception as e:
+        rows = []
+
+    # Лічильники для табів
+    try:
+        counts = db_query(
+            "SELECT status, COUNT(*) AS c FROM knowledge_gaps GROUP BY status"
+        )
+        cnt = {r["status"]: r["c"] for r in counts}
+    except Exception:
+        cnt = {}
+    open_n = cnt.get("open", 0)
+    filled_n = cnt.get("filled", 0)
+    dismissed_n = cnt.get("dismissed", 0)
+    total_n = open_n + filled_n + dismissed_n
+
+    def tab(label, key, count, color):
+        sel = "background:#066aab;color:#fff" if key == status_filter else f"background:#f0f1f5;color:{color}"
+        return (
+            f"<a href='/gaps?status={key}' class='badge' "
+            f"style='padding:6px 14px;border-radius:8px;font-size:13px;font-weight:600;margin-right:8px;{sel};text-decoration:none'>"
+            f"{label} ({count})</a>"
+        )
+
+    tabs_html = (
+        tab("Відкриті", "open", open_n, "#c62828") +
+        tab("Закриті", "filled", filled_n, "#2e7d32") +
+        tab("Не актуальні", "dismissed", dismissed_n, "#666") +
+        tab("Всі", "all", total_n, "#333")
+    )
+
+    rows_html = ""
+    for r in rows:
+        gid = r["id"]
+        status = r.get("status", "open")
+        det_at = str(r.get("detected_at") or "")[:16]
+        prod = r.get("product_hint") or "—"
+        uname = r.get("username") or r.get("user_id") or "—"
+        question = html_escape((r.get("question") or "")[:500])
+        bot_ans = html_escape((r.get("bot_answer") or "")[:600])
+        correction = html_escape((r.get("user_correction") or "")[:500])
+        med_resp = html_escape(r.get("med_dept_response") or "")
+
+        status_color = {"open": "#c62828", "filled": "#2e7d32", "dismissed": "#666"}.get(status, "#333")
+        actions = ""
+        if status == "open":
+            actions = (
+                f"<form method='post' action='/gaps/update/{gid}' style='margin-top:12px;display:flex;gap:8px;align-items:flex-start'>"
+                f"<textarea name='med_dept_response' placeholder='Відповідь медвідділу (опціонально)...' "
+                f"style='flex:1;padding:8px;border:1px solid #ddd;border-radius:6px;font-size:13px;min-height:60px'></textarea>"
+                f"<div style='display:flex;flex-direction:column;gap:6px'>"
+                f"<button name='action' value='filled' class='btn btn-success btn-sm' type='submit'>✓ Закрити</button>"
+                f"<button name='action' value='dismissed' class='btn btn-secondary btn-sm' type='submit'>Не актуально</button>"
+                f"</div></form>"
+            )
+        elif med_resp:
+            actions = f"<div style='margin-top:10px;padding:10px;background:#e8f5e9;border-radius:6px;font-size:13px'><b>Медвідділ:</b> {med_resp}</div>"
+
+        rows_html += (
+            f"<div class='card' style='margin-bottom:16px'>"
+            f"<div style='display:flex;justify-content:space-between;align-items:center;margin-bottom:8px'>"
+            f"<div><span class='badge' style='background:#fce4ec;color:{status_color};padding:3px 10px;border-radius:6px;font-size:12px'>{status}</span> "
+            f"<b style='margin-left:8px'>{prod}</b> <span style='color:#888;font-size:12px'>· {uname} · {det_at}</span></div>"
+            f"</div>"
+            f"<div style='font-size:13px;color:#333;margin-bottom:6px'><b>Питання:</b> {question}</div>"
+            f"<details style='margin-bottom:6px'><summary style='cursor:pointer;font-size:13px;color:#555'>Відповідь бота</summary>"
+            f"<pre style='font-size:12px;background:#f7f8fa;padding:10px;border-radius:6px;white-space:pre-wrap;margin-top:6px'>{bot_ans}</pre></details>"
+            f"<div style='font-size:13px;color:#c62828;margin-top:6px'><b>Виправлення менеджера:</b> {correction}</div>"
+            f"{actions}"
+            f"</div>"
+        )
+
+    if not rows_html:
+        rows_html = f"<div class='card' style='text-align:center;color:#aaa;padding:40px'>Пусто. {('Усі пробіли закриті! 🎉' if status_filter=='open' else '')}</div>"
+
+    content = f"""
+<div style='display:flex;align-items:center;justify-content:space-between;margin-bottom:20px'>
+  <h1 class='page-title'>Пробіли знань <span style='font-size:14px;font-weight:500;color:var(--text-muted);margin-left:8px'>{total_n}</span></h1>
+</div>
+<p style='font-size:13px;color:#666;margin-bottom:20px'>
+  Запити, де менеджер виправив бота. Це сигнал що в RAG-базі недостатньо даних про продукт/тему.
+  Зверніться до медвідділу за уточненням і впишіть відповідь — далі цей запис закриється.
+</p>
+<div style='margin-bottom:20px'>{tabs_html}</div>
+{rows_html}
+"""
+    return render_page(content, active="gaps")
+
+
+@app.route("/gaps/update/<int:gap_id>", methods=["POST"])
+@login_required
+def gaps_update(gap_id):
+    new_status = request.form.get("action", "filled")
+    if new_status not in ("filled", "dismissed"):
+        new_status = "filled"
+    med_resp = (request.form.get("med_dept_response") or "").strip()[:2000]
+    try:
+        db_exec(
+            "UPDATE knowledge_gaps SET status=%s, med_dept_response=%s, resolved_at=NOW() WHERE id=%s",
+            (new_status, med_resp or None, gap_id)
+        )
+        flash(f"Пробіл #{gap_id} → {new_status}", "success")
+    except Exception as e:
+        flash(f"Помилка: {e}", "danger")
+    return redirect(url_for("gaps_page"))
 
 
 @app.route("/quality", methods=["GET"])
