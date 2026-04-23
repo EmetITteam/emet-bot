@@ -431,6 +431,13 @@ def init_db():
                  refusal_rate NUMERIC(4,1),
                  cost_usd NUMERIC(8,2),
                  created_at TIMESTAMP DEFAULT NOW())''')
+            # SD-метрики (Sales Director dashboard) — додаємо колонки в існуючу таблицю
+            cur.execute("ALTER TABLE quality_history ADD COLUMN IF NOT EXISTS correction_rate NUMERIC(4,1) DEFAULT 0")  # % діалогів з виправленням
+            cur.execute("ALTER TABLE quality_history ADD COLUMN IF NOT EXISTS mode_mismatch_count INTEGER DEFAULT 0")  # KB→Coach fallback спрацювань (з логів)
+            cur.execute("ALTER TABLE quality_history ADD COLUMN IF NOT EXISTS margin_at_risk INTEGER DEFAULT 0")  # діалогів про преміум-продукти з низькою оцінкою
+            cur.execute("ALTER TABLE quality_history ADD COLUMN IF NOT EXISTS pct_openai NUMERIC(4,1) DEFAULT 100")  # % відповідей з OpenAI (без failover)
+            cur.execute("ALTER TABLE quality_history ADD COLUMN IF NOT EXISTS pct_gemini NUMERIC(4,1) DEFAULT 0")
+            cur.execute("ALTER TABLE quality_history ADD COLUMN IF NOT EXISTS pct_claude NUMERIC(4,1) DEFAULT 0")
 
             # Пробіли знань — запити на які бот не зміг відповісти правильно,
             # менеджер виправив. Потрібно поповнити базу.

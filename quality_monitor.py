@@ -90,7 +90,7 @@ def get_dialogs(hours_back=24):
     since = (datetime.now() - timedelta(hours=hours_back)).strftime("%Y-%m-%d %H:%M:%S")
     rows = db.query_dict(
         "SELECT id, date, user_id, username, mode, model, found_in_db, "
-        "question, answer, tokens_in, tokens_out "
+        "question, answer, tokens_in, tokens_out, failover_depth "
         "FROM logs WHERE date >= %s ORDER BY id",
         (since,)
     )
@@ -362,8 +362,54 @@ def _summarize_llm_scores(judge_results):
     }
 
 
-def _save_quality_history(dialogs, findings, llm_summary):
-    """Зберігає денний агрегований запис у quality_history. Не падає при помилці."""
+PREMIUM_PRODUCTS = ["ellans", "елансе", "vitaran", "вітаран", "iuse"]  # для margin_at_risk
+
+
+def _compute_sd_metrics(dialogs, judge_results):
+    """Sales Director метрики: correction_rate, mode_mismatch, margin_at_risk, model_distribution."""
+    total = len(dialogs)
+    if not total:
+        return dict(correction_rate=0, mode_mismatch=0, margin_at_risk=0, pct_openai=100, pct_gemini=0, pct_claude=0)
+    # correction_rate — за останні 24h з knowledge_gaps
+    try:
+        row = db.query("SELECT COUNT(*) FROM knowledge_gaps WHERE detected_at >= NOW() - INTERVAL '24 hours'", fetchone=True)
+        corrections = row[0] if row else 0
+        correction_rate = round(corrections / total * 100, 1)
+    except Exception:
+        correction_rate = 0
+    # mode_mismatch — KB-режим перейшов у fallback (визначаємо за відповідями що не схожі на KB-стандарт)
+    # Простий evristic: KB-режим але mode у запиту НЕ спрацював коректно — рахуємо діалоги в kb-режимі
+    # де мав бути продуктовий запит. Точно це визначити складно без KB→Coach fallback логу,
+    # тому беремо суррогат: KB-діалоги де відповідь >300 chars (KB-стандарт коротший) — fallback спрацював
+    mode_mismatch = sum(
+        1 for d in dialogs
+        if (d.get("mode") == "kb" and len((d.get("answer") or "")) > 300)
+    )
+    # margin_at_risk — діалоги про преміум-продукти + низький LLM-judge score
+    judged_low = {r["dialog_id"] for r in judge_results
+                   if "error" not in r
+                   and min(r.get(k, 10) for k in ["helpfulness", "factual_accuracy"]) <= 6}
+    margin_at_risk = sum(
+        1 for d in dialogs
+        if d["id"] in judged_low and any(p in (d.get("question", "") or "").lower() for p in PREMIUM_PRODUCTS)
+    )
+    # model_distribution з failover_depth
+    fd_counts = {0: 0, 1: 0, 2: 0}
+    for d in dialogs:
+        fd = d.get("failover_depth", 0) or 0
+        fd_counts[fd] = fd_counts.get(fd, 0) + 1
+    return dict(
+        correction_rate=correction_rate,
+        mode_mismatch=mode_mismatch,
+        margin_at_risk=margin_at_risk,
+        pct_openai=round(fd_counts[0] / total * 100, 1),
+        pct_gemini=round(fd_counts[1] / total * 100, 1),
+        pct_claude=round(fd_counts[2] / total * 100, 1),
+    )
+
+
+def _save_quality_history(dialogs, findings, llm_summary, judge_results=None):
+    """Зберігає денний агрегований запис у quality_history з SD метриками. Не падає при помилці."""
     try:
         today = datetime.now().strftime("%Y-%m-%d")
         total = len(dialogs)
@@ -374,31 +420,44 @@ def _save_quality_history(dialogs, findings, llm_summary):
         total_in = sum(d.get("tokens_in", 0) or 0 for d in dialogs)
         total_out = sum(d.get("tokens_out", 0) or 0 for d in dialogs)
         cost = round((total_in * 2.5 + total_out * 10.0) / 1_000_000, 2)
+        sd = _compute_sd_metrics(dialogs, judge_results or [])
+        params_base = (today, total)
+        params_sd = (sd["correction_rate"], sd["mode_mismatch"], sd["margin_at_risk"],
+                     sd["pct_openai"], sd["pct_gemini"], sd["pct_claude"])
         if llm_summary:
             db.execute(
                 "INSERT INTO quality_history (date, dialogs_total, dialogs_judged, "
                 "avg_helpfulness, avg_factual, avg_format, avg_role, "
-                "p0_count, p1_count, refusal_rate, cost_usd) "
-                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) "
+                "p0_count, p1_count, refusal_rate, cost_usd, "
+                "correction_rate, mode_mismatch_count, margin_at_risk, pct_openai, pct_gemini, pct_claude) "
+                "VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) "
                 "ON CONFLICT (date) DO UPDATE SET "
                 "dialogs_total=EXCLUDED.dialogs_total, dialogs_judged=EXCLUDED.dialogs_judged, "
                 "avg_helpfulness=EXCLUDED.avg_helpfulness, avg_factual=EXCLUDED.avg_factual, "
                 "avg_format=EXCLUDED.avg_format, avg_role=EXCLUDED.avg_role, "
                 "p0_count=EXCLUDED.p0_count, p1_count=EXCLUDED.p1_count, "
-                "refusal_rate=EXCLUDED.refusal_rate, cost_usd=EXCLUDED.cost_usd",
+                "refusal_rate=EXCLUDED.refusal_rate, cost_usd=EXCLUDED.cost_usd, "
+                "correction_rate=EXCLUDED.correction_rate, mode_mismatch_count=EXCLUDED.mode_mismatch_count, "
+                "margin_at_risk=EXCLUDED.margin_at_risk, pct_openai=EXCLUDED.pct_openai, "
+                "pct_gemini=EXCLUDED.pct_gemini, pct_claude=EXCLUDED.pct_claude",
                 (today, total, llm_summary["n"],
                  llm_summary["avg_helpfulness"], llm_summary["avg_factual"],
                  llm_summary["avg_format"], llm_summary["avg_role"],
-                 p0, p1, refusal_rate, cost)
+                 p0, p1, refusal_rate, cost, *params_sd)
             )
         else:
             db.execute(
                 "INSERT INTO quality_history (date, dialogs_total, dialogs_judged, "
-                "p0_count, p1_count, refusal_rate, cost_usd) VALUES (%s,%s,0,%s,%s,%s,%s) "
+                "p0_count, p1_count, refusal_rate, cost_usd, "
+                "correction_rate, mode_mismatch_count, margin_at_risk, pct_openai, pct_gemini, pct_claude) "
+                "VALUES (%s,%s,0,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s) "
                 "ON CONFLICT (date) DO UPDATE SET dialogs_total=EXCLUDED.dialogs_total, "
                 "p0_count=EXCLUDED.p0_count, p1_count=EXCLUDED.p1_count, "
-                "refusal_rate=EXCLUDED.refusal_rate, cost_usd=EXCLUDED.cost_usd",
-                (today, total, p0, p1, refusal_rate, cost)
+                "refusal_rate=EXCLUDED.refusal_rate, cost_usd=EXCLUDED.cost_usd, "
+                "correction_rate=EXCLUDED.correction_rate, mode_mismatch_count=EXCLUDED.mode_mismatch_count, "
+                "margin_at_risk=EXCLUDED.margin_at_risk, pct_openai=EXCLUDED.pct_openai, "
+                "pct_gemini=EXCLUDED.pct_gemini, pct_claude=EXCLUDED.pct_claude",
+                (today, total, p0, p1, refusal_rate, cost, *params_sd)
             )
     except Exception as e:
         print(f"_save_quality_history error: {e}")
@@ -455,7 +514,7 @@ def run_monitor():
             })
 
     # Зберегти агрегат у quality_history (для тренду)
-    _save_quality_history(dialogs, all_findings, llm_summary)
+    _save_quality_history(dialogs, all_findings, llm_summary, judge_results)
 
     # Build report
     report = build_report(dialogs, all_findings, llm_summary)
@@ -497,7 +556,7 @@ def run_monitor_safe():
                 "dialog_id": r["dialog_id"], "match": r["question"][:80],
             })
 
-    _save_quality_history(dialogs, all_findings, llm_summary)
+    _save_quality_history(dialogs, all_findings, llm_summary, judge_results)
 
     report = build_report(dialogs, all_findings, llm_summary)
     return report, all_findings

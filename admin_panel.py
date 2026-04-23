@@ -2322,11 +2322,13 @@ def quality_page():
     try:
         rows = db.query(
             "SELECT date, dialogs_total, dialogs_judged, avg_helpfulness, avg_factual, "
-            "avg_format, avg_role, p0_count, refusal_rate, cost_usd "
+            "avg_format, avg_role, p0_count, refusal_rate, cost_usd, "
+            "correction_rate, mode_mismatch_count, margin_at_risk, pct_openai, pct_gemini, pct_claude "
             "FROM quality_history ORDER BY date DESC LIMIT 30"
         )
         if rows:
             history_rows = []
+            sd_rows = []
             for r in rows:
                 date_str = r[0].strftime("%d.%m") if hasattr(r[0], "strftime") else str(r[0])
                 judged = r[2] or 0
@@ -2337,11 +2339,28 @@ def quality_page():
                 p0 = r[7] or 0
                 rr = f"{r[8]}%" if r[8] is not None else "—"
                 cost = f"${r[9]}" if r[9] is not None else "—"
+                corr = r[10] if r[10] is not None else 0
+                mm = r[11] or 0
+                mar = r[12] or 0
+                p_oa = r[13] if r[13] is not None else 100
+                p_gm = r[14] if r[14] is not None else 0
+                p_cl = r[15] if r[15] is not None else 0
                 p0_color = "color:#c62828" if p0 > 0 else "color:#2e7d32"
+                corr_color = "color:#c62828" if corr > 5 else ("color:#ef6c00" if corr > 2 else "color:#666")
+                mar_color = "color:#c62828" if mar > 2 else "color:#666"
+                openai_color = "color:#2e7d32" if p_oa >= 95 else ("color:#ef6c00" if p_oa >= 70 else "color:#c62828")
                 history_rows.append(
                     f"<tr><td>{date_str}</td><td>{r[1] or 0}</td><td>{judged}</td>"
                     f"<td>{hp}</td><td>{fc}</td><td>{fm}</td><td>{ro}</td>"
                     f"<td style='{p0_color}'>{p0}</td><td>{rr}</td><td>{cost}</td></tr>"
+                )
+                sd_rows.append(
+                    f"<tr><td>{date_str}</td>"
+                    f"<td style='{corr_color}'><b>{corr}%</b></td>"
+                    f"<td>{mm}</td>"
+                    f"<td style='{mar_color}'>{mar}</td>"
+                    f"<td style='{openai_color}'>{p_oa}%</td>"
+                    f"<td>{p_gm}%</td><td>{p_cl}%</td></tr>"
                 )
             history_html = (
                 "<div class='card'><h2>Історія якості (останні 30 днів)</h2>"
@@ -2355,6 +2374,20 @@ def quality_page():
                 "<th>P0</th><th>Refusal</th><th>Cost</th>"
                 "</tr></thead><tbody>"
                 + "".join(history_rows)
+                + "</tbody></table></div>"
+                "<div class='card' style='margin-top:16px'><h2>Бізнес-метрики (Sales Director)</h2>"
+                "<p style='font-size:13px;color:#666;margin-bottom:12px'>"
+                "<b>Виправлення</b> — % діалогів де менеджер виправив бота (>5% — 🚨, >2% — ⚠️). "
+                "<b>Mode mismatch</b> — KB-режим спрацював fallback на продукти. "
+                "<b>Margin at risk</b> — діалоги про преміум-продукти (Ellansé/Vitaran/IUSE) з низькою оцінкою. "
+                "<b>OpenAI %</b> — частка primary LLM (нижче 95% = були інциденти OpenAI).</p>"
+                "<table style='width:100%;border-collapse:collapse;font-size:13px'>"
+                "<thead><tr style='background:#f0f1f5;text-align:left'>"
+                "<th style='padding:8px'>Дата</th>"
+                "<th>Виправлення</th><th>Mode mismatch</th><th>Margin at risk</th>"
+                "<th>OpenAI %</th><th>Gemini %</th><th>Claude %</th>"
+                "</tr></thead><tbody>"
+                + "".join(sd_rows)
                 + "</tbody></table></div>"
             )
     except Exception as e:
