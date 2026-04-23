@@ -1781,7 +1781,29 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
         elif _intent in ("combo_with_product", "combo_for_indication"):
             mode_key = "combo"
         elif _intent in ("greeting", "out_of_scope"):
-            mode_key = "kb"
+            # Confidence-gated broad fallback (Fix #7):
+            # Якщо confidence низька (<0.7) — не довіряємо out_of_scope сліпо.
+            # Спробуємо broad search по всіх 3 RAG-зонах. Якщо хоч щось знайшли —
+            # йдемо в coach з info_about_product, не in kb-режим.
+            if _intent == "out_of_scope" and _conf < 0.7:
+                try:
+                    from aliases import detect_products_in_text
+                    products_in_query = detect_products_in_text(text)
+                    if products_in_query:
+                        # Явно є продукт + low confidence out_of_scope — це false positive
+                        logger.info("CONF-FALLBACK: out_of_scope with conf=%.2f overridden — products in query: %s",
+                                     _conf, products_in_query[:3])
+                        _intent = "info_about_product"
+                        mode_key = "coach"
+                        if not _full_product:
+                            _full_product = products_in_query[0]
+                            _classifier_result["primary_product"] = products_in_query[0]
+                    else:
+                        mode_key = "kb"
+                except Exception:
+                    mode_key = "kb"
+            else:
+                mode_key = "kb"
         elif (_intent == "unclear_no_product" or
               (_is_short_ambiguous and not _classifier_result.get("primary_product"))
               or (_is_short_ambiguous and chat_history)):
