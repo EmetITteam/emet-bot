@@ -293,7 +293,28 @@ async def classify(client: AsyncOpenAI, query: str, chat_history: list[dict] = N
             history_lines.append(f"{role}: {content}")
         history_text = "ІСТОРІЯ ДІАЛОГУ:\n" + "\n".join(history_lines) + "\n\n"
 
-    user_message = f"{history_text}ПОТОЧНИЙ ЗАПИТ МЕНЕДЖЕРА:\n{query}"
+    # Pre-classifier hint для коротких запитів з явним product name (Fix #4):
+    # НЕ bypass classifier (зберігаємо log line, observability, intent verification),
+    # але передаємо детектовані продукти як hint щоб classifier не помилився
+    # для запитів типу «Refining cleanser» (1-2 слова) → раніше → out_of_scope
+    hint_block = ""
+    try:
+        from aliases import detect_products_in_text
+        words_count = len(query.strip().split())
+        detected = detect_products_in_text(query)
+        if detected and words_count <= 5:
+            # Підказка classifier'у: ці продукти явно згадані, не повертай out_of_scope
+            hint_block = (
+                f"\n\n💡 АВТО-ДЕТЕКЦІЯ: у запиті явно знайдено продукти EMET: {detected[:3]}.\n"
+                f"Запит короткий ({words_count} слів) — це навігаційний запит про продукт.\n"
+                f"primary_product має бути з цього списку. Intent зазвичай info_about_product "
+                f"(якщо нема явного питання про склад/протокол/протипоказ).\n"
+                f"НЕ повертай out_of_scope.\n"
+            )
+    except Exception:
+        pass
+
+    user_message = f"{history_text}ПОТОЧНИЙ ЗАПИТ МЕНЕДЖЕРА:\n{query}{hint_block}"
 
     # Інжектимо актуальний список відомих продуктів у CLASSIFIER_PROMPT
     try:
