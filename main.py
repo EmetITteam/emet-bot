@@ -1645,6 +1645,31 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
         except Exception as _ds_err:
             logger.warning("dialog_state error: %s", _ds_err)
 
+        # Differential diagnosis: при низькій впевненості класифікатора — ставимо уточнююче питання
+        # замість того щоб вгадувати і дати неправильну відповідь
+        _ASK_CLARIFY_INTENTS = {"info_about_product", "info_composition", "info_indications",
+                                 "info_protocol", "info_comparison"}
+        if (_conf < 0.5 and _intent in _ASK_CLARIFY_INTENTS
+                and not _full_product
+                and not (chat_history and any("?" in m.get("content", "")[-3:] for m in chat_history[-2:]))):
+            # Низька впевненість + немає продукту + не у відповідь на питання бота → уточнюємо
+            _vitaran_variants = "Vitaran i / iII / Whitening / Tox Eye / Skin Healer"
+            _clarify_msg = (
+                "🔍 *Уточни запит, будь ласка*\n\n"
+                "Я не до кінця зрозумів про що саме питання. Це допоможе дати точну відповідь:\n\n"
+                "• *Який препарат?* (наприклад: Petaran, Vitaran, Ellansé, ESSE)\n"
+                f"• Якщо Vitaran — *який варіант?* ({_vitaran_variants})\n"
+                "• *Що саме хочеш дізнатись?* (склад / показання / протокол / комбо / порівняння)\n\n"
+                "_Приклад чіткого запиту: «Склад Vitaran Whitening» або «Протокол Petaran для шиї»_"
+            )
+            await sent_msg.edit_text(_clarify_msg, parse_mode="Markdown")
+            logger.info("CLARIFY: low confidence (%.2f) intent=%s, asked for clarification", _conf, _intent)
+            # Логуємо як звичайний запит з відповіддю-clarification
+            log_to_db(message.from_user.id, message.from_user.username or f"id{message.from_user.id}",
+                       mode_key, "clarify", text, "[clarification asked due to low confidence]",
+                       False, "clarify-template", 0, 0, 0)
+            return
+
         # Ультракороткі запити-заперечення (context leak захист)
         _short_objection_words = {
             "дорого", "дорогий", "дорогі", "дороге",
