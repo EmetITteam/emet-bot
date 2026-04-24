@@ -257,7 +257,8 @@ def get_main_menu():
     builder.button(text="🎓 Навчання і тести", callback_data="set_learn")
     builder.button(text="🔍 Розбір кейсів", callback_data="set_cases")
     builder.button(text="⚙️ Операційні питання", callback_data="set_operational")
-    builder.button(text="🌱 Онбординг", callback_data="set_onboarding")
+    # Онбординг тимчасово прихований — блок порожній, повернемо коли наповнимо контентом
+    # builder.button(text="🌱 Онбординг", callback_data="set_onboarding")
     builder.button(text="📸 До/Після", callback_data="set_before_after")
     builder.button(text="👤 Мій профіль", callback_data="show_profile")
     builder.adjust(1)
