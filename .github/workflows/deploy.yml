@@ -30,9 +30,30 @@ jobs:
           key: ${{ secrets.DEPLOY_KEY }}
           port: ${{ secrets.SERVER_PORT }}
           script: |
+            set -e
             cd /opt/emet-bot
-            git pull origin main
-            # Маркер деплою — бот побачить його при старті і надішле правильне повідомлення
+
+            # 1. Stash local changes (file mode bits, untracked artifacts) щоб git pull не падав
+            git stash --include-untracked 2>&1 | tail -2 || true
+            git pull origin main 2>&1 | tail -3
+            git stash drop 2>/dev/null || true
+
+            # 2. Маркер деплою — бот побачить його при старті і надішле правильне повідомлення
             echo "$(date -u +%Y-%m-%dT%H:%M:%SZ)" > data/deploy_marker.txt
-            docker compose up --build -d
+
+            # 3. Build перед стопом — щоб простой був мінімальний
+            docker compose build emet-bot emet-admin
+
+            # 4. Чистий restart: видалити container'и явно (уникнути zombie у статусі Created)
+            # При швидкому --build контейнер може застрягти між "Stopping" і "Created" — блокує recreation
+            docker rm -f emet_bot_app emet_admin_panel 2>/dev/null || true
+
+            # 5. Підняти заново з готовим image (швидко) + видалити orphan-контейнери
+            docker compose up -d --remove-orphans
+
+            # 6. Чистка старих image
             docker image prune -f
+
+            # 7. Sanity check — підтвердити що обидва контейнери Up
+            sleep 5
+            docker ps --filter name=emet_bot_app --filter name=emet_admin_panel --format '{{.Names}}\t{{.Status}}'
