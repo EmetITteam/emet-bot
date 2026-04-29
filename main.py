@@ -4159,12 +4159,36 @@ async def auto_sync_task():
         await asyncio.sleep(sync_manager.SYNC_INTERVAL_SEC)
 
 
+async def _retry_async(coro_factory, attempts: int = 5, base_delay: int = 5, name: str = "operation"):
+    """Retry async-операції з exponential backoff. Захист від transient network/DNS blip'ів.
+    coro_factory — callable що повертає НОВУ coroutine на кожну спробу (важливо: coro можна await тільки 1 раз).
+    Послідовність затримок: 5s, 10s, 20s, 40s, 80s = до ~2.5 хв total retry.
+    Якщо не допомогло — реально щось серйозне з мережею, raise."""
+    last_exc = None
+    for attempt in range(attempts):
+        try:
+            return await coro_factory()
+        except Exception as e:
+            last_exc = e
+            if attempt == attempts - 1:
+                logger.error("%s failed after %d attempts: %s", name, attempts, e)
+                raise
+            wait = base_delay * (2 ** attempt)
+            logger.warning("%s attempt %d/%d failed (%s) — retry in %ds",
+                           name, attempt + 1, attempts, type(e).__name__, wait)
+            await asyncio.sleep(wait)
+    raise last_exc  # type: ignore[misc]
+
+
 async def main():
     init_db()
     sync_manager.init_sync_tables()
     seed_vitaran_course()
     seed_onboarding()
-    await set_bot_commands(bot)
+    # set_bot_commands — DNS/Telegram API call. На startup мережа може ще не бути готовою.
+    # Раніше при DNS blip'ах бот crash'ився ⮕ docker restart loop (561 рестартів за місяць).
+    # Тепер: 5 спроб з backoff (5/10/20/40/80 сек) = до 2.5 хв чекаємо мережу.
+    await _retry_async(lambda: set_bot_commands(bot), name="set_bot_commands")
     if os.getenv("AUTO_SYNC_ENABLED", "false").lower() == "true":
         asyncio.create_task(auto_sync_task())
         logger.info("EMET bot started. Auto-sync every %d min.", sync_manager.SYNC_INTERVAL_SEC // 60)
@@ -4176,7 +4200,8 @@ async def main():
     asyncio.create_task(daily_quality_task())
 
     # Повідомлення адміну про запуск — розрізняємо деплой від несподіваного рестарту
-    try:
+    # 3 спроби з backoff (3, 6 сек) — щоб не крашити старт через тимчасовий DNS-blip на Telegram API
+    async def _notify_startup():
         marker_path = "data/deploy_marker.txt"
         if os.path.exists(marker_path):
             with open(marker_path) as f:
@@ -4197,8 +4222,10 @@ async def main():
                 "Перевір логи: `docker logs emet_bot_app --tail 50`",
                 parse_mode="Markdown"
             )
-    except Exception:
-        pass
+    try:
+        await _retry_async(_notify_startup, attempts=3, base_delay=3, name="startup_notify")
+    except Exception as e:
+        logger.warning("startup notify failed (admin not notified): %s", e)
 
     await dp.start_polling(bot)
 
