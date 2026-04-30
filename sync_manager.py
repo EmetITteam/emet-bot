@@ -263,6 +263,42 @@ def _split_coach_to_products_competitors():
     except Exception as e:
         print(f"  [split] LMS add error: {e}")
 
+    # Add manual product cards from data/manual_product_cards/ (картки медвідділу + Sales Director)
+    # Ці картки переживають auto-sync — кожен rebuild їх читає заново.
+    # Один файл = один dense chunk (НЕ ділимо splitter'ом — оптимізовано під RAG retrieval).
+    try:
+        import os as _os
+        cards_dir = "data/manual_product_cards"
+        if _os.path.isdir(cards_dir):
+            card_count = 0
+            for filename in sorted(_os.listdir(cards_dir)):
+                if not filename.endswith(".md"):
+                    continue
+                filepath = _os.path.join(cards_dir, filename)
+                with open(filepath, "r", encoding="utf-8") as f:
+                    content = f.read()
+                # Парсимо YAML frontmatter для метаданих
+                meta = {"source": f"[KARTKA] {filename}", "url": "manual_card", "folder": "products"}
+                if content.startswith("---\n"):
+                    end = content.find("\n---\n", 4)
+                    if end > 0:
+                        yaml_block = content[4:end]
+                        body = content[end + 5:]
+                        for line in yaml_block.splitlines():
+                            if ":" in line:
+                                k, _, v = line.partition(":")
+                                k = k.strip()
+                                v = v.strip().strip("'\"")
+                                if k in ("product_canonical", "section", "product_name", "source"):
+                                    meta[k] = v
+                        content = body
+                doc = _Doc(page_content=content, metadata=meta)
+                products.append(doc)
+                card_count += 1
+            print(f"  [split] manual cards added: {card_count}")
+    except Exception as e:
+        print(f"  [split] manual cards error: {e}")
+
     # Filter out heading-only / empty chunks (sync bug protection)
     def _has_real_content(d):
         # Видаляємо markdown-заголовки та пробіли — рахуємо реальні символи
