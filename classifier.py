@@ -230,6 +230,21 @@ i, iII, Whitening, Tox, Skin Healer
 - "конкуренти X" / "що можна протиставити X" → info_comparison
   (це запит менеджера ПОРІВНЯТИ/ОТРИМАТИ СПИСОК конкурентів, НЕ заперечення лікаря!)
 
+**ІНГРЕДІЄНТИ — запити «в якому продукті є X»:**
+- "В каком продукте есть ниацинамид?" → info_composition (інгредієнт-search)
+- "Якi препарати містять PDRN?" → info_composition
+- "Де є гіалуронова кислота в портфелі?" → info_composition
+- "Який продукт з вітаміном С?" → info_composition
+- "Що з полінуклеотидами в EMET?" → info_composition
+⚠️ Для ingredient-search НЕ виводь out_of_scope, навіть якщо явного бренду не вказано.
+primary_product може бути null — але intent САМЕ info_composition.
+
+**ЗАПИТИ ПРО ВИБІР БРЕНДУ ПО СТАНУ ШКІРИ:**
+- "Купероз який бренд краще?" → info_comparison (порівняння брендів за показанням)
+- "При акне що краще?" → info_comparison
+- "Який препарат для пігментації?" → info_indications (показання → пошук продукту)
+- "Що від набряків?" → info_indications
+
 ## ВІДОМІ ПРОДУКТИ EMET (для розпізнавання)
 
 {{KNOWN_PRODUCTS_BLOCK}}
@@ -377,6 +392,87 @@ async def classify(client: AsyncOpenAI, query: str, chat_history: list[dict] = N
         competitor = data.get("competitor")
         if competitor and competitor not in COMPETITORS:
             competitor = None
+
+        # POST-PROCESS HEURISTIC: якщо в query 2+ EMET продукти БЕЗ vs/конкурент маркерів —
+        # це combo (наприклад "Neuronox і Vitaran", "Ellansé і Neuramis").
+        try:
+            from aliases import detect_products_in_text
+            q_lower_combo = (query or "").lower()
+            comparison_signals = ["vs", "проти", "против", "відрізня", "отлич", "конкурент",
+                                    "альтернатив", "аналог", "краще", "лучше"]
+            is_comparison = any(s in q_lower_combo for s in comparison_signals)
+            detected_products = detect_products_in_text(query) or []
+            # Деуплікація — мапимо на бренди
+            unique_brands = set()
+            for p in detected_products:
+                if "esse" in p.lower() or "Esse" in p:
+                    unique_brands.add("ESSE")
+                elif "vitaran" in p.lower():
+                    unique_brands.add("Vitaran")
+                elif "ellans" in p.lower() or "Ellansé" in p:
+                    unique_brands.add("Ellansé")
+                elif "petaran" in p.lower():
+                    unique_brands.add("Petaran")
+                elif "neuramis" in p.lower():
+                    unique_brands.add("Neuramis")
+                elif "neuronox" in p.lower():
+                    unique_brands.add("Neuronox")
+                elif "exoxe" in p.lower() or "EXOXE" in p:
+                    unique_brands.add("EXOXE")
+                elif "iuse" in p.lower() or "skinbooster" in p.lower():
+                    unique_brands.add("IUSE")
+                elif "magnox" in p.lower():
+                    unique_brands.add("Magnox")
+                else:
+                    unique_brands.add(p)
+            if len(unique_brands) >= 2 and not is_comparison and intent not in ("info_comparison", "combo_for_indication", "combo_with_product"):
+                logger.info("Classifier heuristic override: %d brands without comparison markers → combo_with_product (was %s)",
+                              len(unique_brands), intent)
+                intent = "combo_with_product"
+        except Exception as _combo_err:
+            logger.warning("Combo heuristic error: %s", _combo_err)
+
+        # POST-PROCESS OVERRIDE: якщо в query явно є назва конкурента, але classifier
+        # її не вибрав — додаємо. Та якщо primary_product вибрано АЛЕ цей продукт ВЗАГАЛІ
+        # не згаданий у query (LLM придумав) — обнуляємо.
+        try:
+            q_lower = (query or "").lower()
+            # Detect competitor in query
+            for comp_name in COMPETITORS:
+                if comp_name.lower() in q_lower and not competitor:
+                    competitor = comp_name
+                    logger.info("Classifier override: detected competitor %s in query", comp_name)
+                    break
+            # Якщо primary_product не згаданий у query взагалі (галюцинація LLM) — обнуляємо
+            if primary:
+                primary_aliases = {primary.lower()}
+                # Add common UA/RU транслітерації для перевірки
+                _trans_map = {
+                    "esse": ["esse", "ессе", "эссе"],
+                    "ellansé": ["ellans", "елансе", "эллансе"],
+                    "petaran": ["petaran", "петаран"],
+                    "vitaran": ["vitaran", "вітаран", "витаран"],
+                    "neuramis": ["neuramis", "нейрамис", "нейраміс"],
+                    "neuronox": ["neuronox", "нейронокс"],
+                    "exoxe": ["exoxe", "ексоксе", "екзокс", "экзокс", "ехохе"],
+                    "iuse": ["iuse", "июз", "скінбустер", "skinbooster"],
+                    "magnox": ["magnox", "магнокс"],
+                }
+                for canon, aliases in _trans_map.items():
+                    if canon in primary.lower():
+                        primary_aliases.update(aliases)
+                # Word-boundary check, інакше "esse" знайдеться в "radiesse"!
+                import re as _re
+                def _alias_in_query(a, q):
+                    pattern = r'(?:^|[^a-zа-яіїєґё])' + _re.escape(a) + r'(?:[^a-zа-яіїєґё]|$)'
+                    return bool(_re.search(pattern, q, _re.IGNORECASE))
+                if not any(_alias_in_query(a, q_lower) for a in primary_aliases):
+                    # Only blank if competitor IS in query (clear sign LLM confused product with competitor)
+                    if competitor:
+                        logger.info("Classifier override: blanking primary=%s (not in query, but competitor=%s present)", primary, competitor)
+                        primary = None
+        except Exception as _ovr_err:
+            logger.warning("Classifier override error: %s", _ovr_err)
 
         return {
             "intent": intent,

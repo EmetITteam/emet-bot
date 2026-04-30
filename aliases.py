@@ -115,35 +115,91 @@ ALIAS_MAP = {
     "професійна лінія": "Esse Professional line",
     "професіональна": "Esse Professional line",
     "кор": "Esse Core line",
+    # ESSE — транслітерації самого бренду (UA/RU)
+    "ессе": "ESSE",
+    "эссе": "ESSE",
+    "есcе": "ESSE",  # mix cyrillic e + ascii c
 
-    # Vitaran варіанти (UA транслітерація)
-    "вайтенінг": "Vitaran Whitening",
-    "вайтенинг": "Vitaran Whitening",
-    "вайтнінг": "Vitaran Whitening",
-    "тохтай": "Vitaran Tox Eye",
-    "токс ай": "Vitaran Tox Eye",
-    "токсай": "Vitaran Tox Eye",
-    "вітаран ай": "Vitaran i",
-    "вітаран ай ту": "Vitaran iII",
-    "вітаран два": "Vitaran iII",
-    "скін хілер": "Vitaran Skin Healer",
-    "дуал серум": "Vitaran Dual Serum",
-    "дуал-серум": "Vitaran Dual Serum",
+    # ── Vitaran (інʼєкційні + космецевтика) — UA + RU транслітерація ──
+    "вітаран": "Vitaran", "витаран": "Vitaran", "вайтаран": "Vitaran",
+    "hp cell": "Vitaran", "хпцелл": "Vitaran", "ейчпі": "Vitaran",
+    "вайтенінг": "Vitaran Whitening", "вайтенинг": "Vitaran Whitening",
+    "вайтнінг": "Vitaran Whitening", "уайтенинг": "Vitaran Whitening",
+    "вайтенинг анти-эйдж": "Vitaran Whitening", "whitening": "Vitaran Whitening",
+    "тохтай": "Vitaran Tox Eye", "токс ай": "Vitaran Tox Eye", "токсай": "Vitaran Tox Eye",
+    "токс-ай": "Vitaran Tox Eye", "tox eye": "Vitaran Tox Eye", "tox & face": "Vitaran Tox Eye",
+    "вітаран ай": "HP Cell Vitaran i", "vitaran i": "HP Cell Vitaran i",
+    "вітаран ай ту": "HP Cell Vitaran iII", "вітаран два": "HP Cell Vitaran iII",
+    "vitaran ii": "HP Cell Vitaran iII", "vitaran iii": "HP Cell Vitaran iII",
+    "скін хілер": "Vitaran Skin Healer", "скин хилер": "Vitaran Skin Healer",
+    "skin healer": "Vitaran Skin Healer",
+    "дуал серум": "Vitaran Dual Serum", "дуал-серум": "Vitaran Dual Serum",
+    "dual serum": "Vitaran Dual Serum", "дуал сирум": "Vitaran Dual Serum",
+    "vitaran exosome": "Vitaran Dual Serum", "вітаран екзосом": "Vitaran Dual Serum",
+    "azulene": "Vitaran Azulene Serum", "азулен": "Vitaran Azulene Serum",
+    "sleeping cream": "Vitaran Sleeping Cream", "слипінг крем": "Vitaran Sleeping Cream",
+    "wrapping serum": "Vitaran Skin Healer", "враппінг": "Vitaran Skin Healer",
 
-    # Інші продукти
-    "елансе": "Ellansé",
-    "эллансе": "Ellansé",
-    "петаран": "Petaran PLLA",
-    "ексоксе": "EXOXE",
-    "экзосом": "EXOXE",
-    "нейрамис": "Neuramis",
-    "нейраміс": "Neuramis",
-    "нейронокс": "Neuronox",
-    "скінбустер": "IUSE Skinbooster HA20",
-    "скін бустер": "IUSE Skinbooster HA20",
-    "хеар регроус": "IUSE Hair Regrowth",
-    "колаген марін": "IUSE Collagen Marine Beauty",
-    "магнокс": "Magnox 520",
+    # ── Petaran ──
+    "петаран": "Petaran PLLA", "петараан": "Petaran PLLA", "petaran": "Petaran PLLA",
+    "петаран плла": "Petaran PLLA", "плла": "Petaran PLLA", "polla": "Petaran PLLA",
+    "polу-l-молочна": "Petaran PLLA", "полі-l-молочна": "Petaran PLLA",
+    "polу l молочна": "Petaran PLLA",
+
+    # ── Ellansé ──
+    "елансе": "Ellansé", "эллансе": "Ellansé", "ellansé": "Ellansé", "ellanse": "Ellansé",
+    "елансэ": "Ellansé", "елланс": "Ellansé", "эленсе": "Ellansé",
+    "ellanse s": "Ellansé S", "елансе s": "Ellansé S", "эллансе с": "Ellansé S",
+    "ellanse m": "Ellansé M", "елансе m": "Ellansé M", "эллансе м": "Ellansé M",
+    "пкл": "Ellansé", "pcl": "Ellansé", "поликапролактон": "Ellansé",
+    "полікапролактон": "Ellansé",
+
+    # ── Neuramis (всі варіанти) ──
+    "нейрамис": "Neuramis", "нейраміс": "Neuramis", "neuramis": "Neuramis",
+    "неурамис": "Neuramis", "неураміс": "Neuramis",
+    "neuramis light": "Neuramis", "нейрамис лайт": "Neuramis",
+    "neuramis deep": "Neuramis", "нейрамис діп": "Neuramis", "нейрамис дип": "Neuramis",
+    "neuramis volume": "Neuramis", "нейрамис волюм": "Neuramis",
+    "neuramis lidocaine": "Neuramis", "нейрамис лідокаїн": "Neuramis",
+    "neuramis volume lidocaine": "Neuramis",
+
+    # ── Neuronox ──
+    "нейронокс": "Neuronox", "neuronox": "Neuronox", "ботокс корея": "Neuronox",
+    "ботулотоксин корея": "Neuronox", "медітокс": "Neuronox", "medytox": "Neuronox",
+
+    # ── EXOXE — багато варіантів написання + транслітерацій ──
+    "exoxe": "EXOXE", "ексоксе": "EXOXE", "екзокс": "EXOXE", "экзокс": "EXOXE",
+    "ексокс": "EXOXE", "эксокс": "EXOXE", "экзоксе": "EXOXE", "екзоксе": "EXOXE",
+    "ехохе": "EXOXE", "эхохе": "EXOXE", "экзосом": "EXOXE", "екзосом": "EXOXE",
+    "екзосоми": "EXOXE", "экзосомы": "EXOXE", "exosomes": "EXOXE",
+    "екзосомний": "EXOXE", "экзосомный": "EXOXE", "екзосомна терапія": "EXOXE",
+
+    # ── IUSE родина ──
+    "iuse": "IUSE Skinbooster HA20",
+    "июз": "IUSE Skinbooster HA20", "юз": "IUSE Skinbooster HA20",
+    "ійюз": "IUSE Skinbooster HA20",
+    # Skinbooster
+    "iuse skinbooster": "IUSE Skinbooster HA20", "iuse skin booster": "IUSE Skinbooster HA20",
+    "скінбустер": "IUSE Skinbooster HA20", "скін бустер": "IUSE Skinbooster HA20",
+    "скинбустер": "IUSE Skinbooster HA20", "скин бустер": "IUSE Skinbooster HA20",
+    "ha20": "IUSE Skinbooster HA20", "skinbooster": "IUSE Skinbooster HA20",
+    "skin booster": "IUSE Skinbooster HA20",
+    "впв": "IUSE Skinbooster HA20",  # ВПВ Skin Booster — таблиця властивостей-переваг-вигод
+    # Hair
+    "iuse hair": "IUSE Hair Regrowth", "iuse_hair": "IUSE Hair Regrowth",
+    "хеар регроус": "IUSE Hair Regrowth", "хеар": "IUSE Hair Regrowth",
+    "iuse hair regrowth": "IUSE Hair Regrowth",
+    "iuse для волосся": "IUSE Hair Regrowth", "iuse для волос": "IUSE Hair Regrowth",
+    "віднов волосся iuse": "IUSE Hair Regrowth",
+    # Collagen
+    "iuse collagen": "IUSE Collagen Marine Beauty", "iuse колаген": "IUSE Collagen Marine Beauty",
+    "колаген марін": "IUSE Collagen Marine Beauty", "коллаген марин": "IUSE Collagen Marine Beauty",
+    "marine beauty": "IUSE Collagen Marine Beauty", "marine collagen iuse": "IUSE Collagen Marine Beauty",
+
+    # ── Magnox ──
+    "магнокс": "Magnox 520", "магнокс 520": "Magnox 520", "magnox 520": "Magnox 520",
+    "магній 520": "Magnox 520", "магний 520": "Magnox 520",
+    "магниевая добавка": "Magnox 520", "магнієва добавка": "Magnox 520",
 }
 
 

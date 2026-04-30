@@ -194,9 +194,9 @@ logger = logging.getLogger("emet_bot")
 
 # --- RAG & LLM CONSTANTS ---
 RAG_K_PRODUCTS         = 16    # chunks from products index (our data + manual cards)
-RAG_K_COMPETITORS      = 8     # chunks from competitors index (comparisons + products like ESSE)
-RAG_K_DEFAULT          = 15    # chunks for kb/cases/operational
-RAG_K_COMBO            = 15    # chunks for combo with category filter
+RAG_K_COMPETITORS      = 6     # chunks from competitors index (was 8 — reduced after smart import quality bump)
+RAG_K_DEFAULT          = 12    # chunks for kb/cases/operational (was 15 — reduced; KB queries simpler)
+RAG_K_COMBO            = 16    # chunks for combo (was 15 → tested 12 → revert to 16 because combo for indication needs multiple protocols)
 
 # Dynamic chunk counts per intent type — менше для простих, більше для складних
 RAG_K_BY_INTENT = {
@@ -879,6 +879,21 @@ def _extract_docs(docs):
     context_text = ""
     sources = {}
     grouped_docs = {}
+    # Дедуплікація: нормалізована хеш-сигнатура перших 250 chars контенту.
+    # ESSE-карточки (та інші) часто містять ідентичний brand-boilerplate блок —
+    # без дедупа в context потрапляє 3-5 копій одного і того ж тексту.
+    import hashlib
+    import re as _re
+    seen_signatures = set()
+    dropped_dups = 0
+
+    def _content_signature(text: str) -> str:
+        # Hash повного нормалізованого content — drop тільки точні дублі.
+        # (Раніше dedup по first 250 chars був занадто агресивним: комбо-чанки
+        # з однаковим зачином втрачали різні протоколи в середині.)
+        norm = _re.sub(r"\s+", " ", text.lower()).strip()
+        norm = _re.sub(r"[^\w\s]", "", norm)
+        return hashlib.md5(norm.encode("utf-8", errors="replace")).hexdigest()
 
     for doc in docs:
         name = doc.metadata.get("source", "Невідомий документ")
@@ -891,11 +906,20 @@ def _extract_docs(docs):
         if _INJECTION_PATTERNS.search(content):
             content = _INJECTION_PATTERNS.sub("[FILTERED]", content)
             logger.warning("Prompt injection pattern detected in doc '%s'", name[:60])
+        # Skip near-duplicates (same first 250 normalized chars)
+        sig = _content_signature(content)
+        if sig in seen_signatures:
+            dropped_dups += 1
+            continue
+        seen_signatures.add(sig)
         # group by name+scope, щоб scope-маркер потрапив у заголовок групи
         key = (name, scope, product_canonical)
         if key not in grouped_docs:
             grouped_docs[key] = {"url": url, "file_id": file_id, "content": []}
         grouped_docs[key]["content"].append(content)
+    if dropped_dups:
+        logger.info("RAG dedup: dropped %d near-duplicate chunks (%d unique remain)",
+                     dropped_dups, len(seen_signatures))
 
     for i, ((name, scope, product_canonical), data) in enumerate(grouped_docs.items(), 1):
         doc_id = f"REF{i}"
@@ -1190,7 +1214,7 @@ def get_context(query: str, mode: str = "kb", provider: str = "openai", has_comp
                 products_in_query = detect_products_in_text(query)
                 # Перевіряємо чи KB-чанки взагалі містять згадку наших продуктів у metadata
                 kb_has_product = any(d.metadata.get("product_canonical") for d in docs)
-                # Fallback тригер: запит про продукт + KB не повернув жоден product chunk
+                # Тригер 1: запит про конкретний продукт + KB не повернув product chunks
                 if products_in_query and not kb_has_product:
                     logger.info("KB→Coach fallback: query has products %s but KB chunks lack product_canonical",
                                  products_in_query[:3])
@@ -1198,8 +1222,37 @@ def get_context(query: str, mode: str = "kb", provider: str = "openai", has_comp
                     docs_p = _search_with_score(vdb_p, normalized_query, RAG_K_DEFAULT)
                     if docs_p:
                         return _extract_docs(docs_p)
+
+                # Тригер 2: запит про склад/інгредієнт/ефект без явного продукту
+                # ("в якому продукті є ніацинамід?" → треба шукати в products RAG)
+                product_topic_markers = [
+                    # ingredients
+                    "ніацинамід", "ниацинамид", "niacinamide", "аденозин", "пдрн", "pdrn",
+                    "плла", "plla", "pcl", "поліl-молочна", "екзосом", "экзосом", "exosom",
+                    "пeптид", "пeптид", "peptid", "ретинол", "retinol", "гіалуронов", "гиалуронов",
+                    "колаген", "коллаген", "collagen", "вітамін", "витамин",
+                    # product-talk markers
+                    "склад", "состав", "інгредієнт", "ингредиент", "діюч", "действую",
+                    "процедур", "ін'єкц", "инъекц", "філер", "филлер", "filler",
+                    "ботулотоксин", "ботокс", "biostim", "біостим",
+                    # condition/indication markers (often product-specific answers needed)
+                    "купероз", "розацeа", "розацea", "акне", "пігмент", "пигмент",
+                    "зморшк", "морщин", "набряк", "отёк",
+                ]
+                q_lower = (query or "").lower()
+                # Replace cyrillic e/Е → ASCII for matching
+                q_normalized = q_lower.replace("е", "e").replace("Е", "E")
+                if any(m in q_lower or m in q_normalized for m in product_topic_markers):
+                    logger.info("KB→Coach fallback: product-topic markers in query %r", query[:80])
+                    vdb_p = _get_vdb("products", provider)
+                    docs_p = _search_with_score(vdb_p, normalized_query, RAG_K_DEFAULT)
+                    if docs_p:
+                        ctx_p, src_p = _extract_docs(docs_p)
+                        # Якщо products знайшли більше — використовуємо їх
+                        if len(ctx_p.strip()) > 100:
+                            return ctx_p, src_p
             except Exception as e:
-                logger.warning("KB fallback detect_products error: %s", e)
+                logger.warning("KB fallback error: %s", e)
             # Legacy fallback (char-length) — як safety net якщо detect нічого не знайшов
             if len(context_text.strip()) < 200:
                 logger.info("KB context weak (%d chars), fallback to products RAG: %r", len(context_text.strip()), query[:80])
@@ -1213,31 +1266,58 @@ def get_context(query: str, mode: str = "kb", provider: str = "openai", has_comp
 
     if mode == "combo":
         # Combo: пріоритет на чанки зі scope=protocol (комбіновані протоколи / схеми)
-        # + обычний semantic search якщо protocol-чанків мало
+        # Стратегія:
+        # 1) Oversample protocol_docs (k*2) — щоб різні комбо потрапили в pool
+        # 2) Дедуп по source + першим 80 chars (різні комбо мають різний зачин)
+        # 3) Доповнити general semantic chunks якщо protocol-only недостатньо
         vdb = _get_vdb("products", provider)
+        oversample_k = RAG_K_COMBO * 2
         try:
-            protocol_docs = vdb.similarity_search(
-                normalized_query, k=RAG_K_COMBO,
+            protocol_pool = vdb.similarity_search(
+                normalized_query, k=oversample_k,
                 filter={"scope": "protocol"}
             )
-            logger.info("RAG combo: found %d scope=protocol chunks", len(protocol_docs))
+            logger.info("RAG combo: oversampled %d scope=protocol chunks", len(protocol_pool))
         except Exception as e:
             logger.warning("combo scope filter failed: %s", e)
-            protocol_docs = []
-        # Загальний semantic search для добору контексту
-        general_docs = _search_with_score(vdb, normalized_query, RAG_K_COMBO)
-        # Merge: protocol_docs першими, потім general (без дублів)
-        seen_ids = set()
-        merged = []
-        for d in protocol_docs + general_docs:
-            key = (d.metadata.get("source", ""), d.page_content[:100])
-            if key in seen_ids:
+            protocol_pool = []
+
+        # Diversification: take unique combos by content prefix (different combos start differently)
+        seen_combo_keys = set()
+        diverse_protocols = []
+        for d in protocol_pool:
+            content = d.page_content
+            # Спрощений ключ: source + перші 80 chars нормалізованого контенту
+            src = d.metadata.get("source", "") or ""
+            prefix = " ".join(content.split())[:80].lower()
+            key = (src, prefix)
+            if key in seen_combo_keys:
                 continue
-            seen_ids.add(key)
-            merged.append(d)
-        if not merged:
-            merged = vdb.similarity_search(normalized_query, k=RAG_K_COMBO)
-        return _extract_docs(merged[:RAG_K_COMBO])
+            seen_combo_keys.add(key)
+            diverse_protocols.append(d)
+            if len(diverse_protocols) >= RAG_K_COMBO:
+                break
+
+        # Доповнення general chunks якщо protocol-only мало
+        if len(diverse_protocols) < RAG_K_COMBO:
+            general_docs = _search_with_score(vdb, normalized_query, RAG_K_COMBO)
+            for d in general_docs:
+                src = d.metadata.get("source", "") or ""
+                prefix = " ".join(d.page_content.split())[:80].lower()
+                key = (src, prefix)
+                if key in seen_combo_keys:
+                    continue
+                seen_combo_keys.add(key)
+                diverse_protocols.append(d)
+                if len(diverse_protocols) >= RAG_K_COMBO:
+                    break
+
+        if not diverse_protocols:
+            diverse_protocols = vdb.similarity_search(normalized_query, k=RAG_K_COMBO)
+
+        logger.info("RAG combo: %d diverse chunks selected (from %d protocol pool)",
+                     len(diverse_protocols), len(protocol_pool))
+        return _extract_docs(diverse_protocols[:RAG_K_COMBO])
 
     # Coach mode — 3-zone logic з product-lock
     vdb_products = _get_vdb("products", provider)
@@ -1293,35 +1373,82 @@ def _search_with_product_filter(vdb, query, k, product_canonical):
     Якщо для продукту мало чанків — розширюємо пошук на суміжні варіанти.
     """
     try:
-        # Для ESSE — пробуємо subline-narrowed search першою
+        # Для ESSE — diversified retrieval (топ-5 РІЗНИХ продуктів, не топ-16 схожих)
+        # АЛЕ: якщо запит про конкретний sub-product (наприклад "склад Refining Cleanser") —
+        # diversification зашкодить. Перевіряємо ALIAS_MAP — чи в запиті явна назва sub-product.
         if product_canonical == "ESSE":
+            try:
+                from aliases import detect_products_in_text, ESSE_PRODUCTS
+                # Skip diversification якщо в запиті є явна назва ESSE sub-product
+                # (наприклад "Refining Cleanser", "Probiotic Serum", "Sensitive Mist")
+                detected = detect_products_in_text(query) or []
+                has_specific_esse = any(
+                    p in detected and any(esse_p.lower() in p.lower() for esse_p in ESSE_PRODUCTS)
+                    for p in detected
+                )
+                if has_specific_esse:
+                    # Звичайний product-locked search (топ-K чанків про цей конкретний sub-product)
+                    docs = vdb.similarity_search(
+                        query, k=k,
+                        filter={"product_canonical": "ESSE"}
+                    )
+                    logger.info("RAG ESSE sub-product specific (no diversification): %d chunks for query %r", len(docs), query[:60])
+                    return docs
+            except Exception as _esse_specific_err:
+                logger.warning("ESSE sub-product detect error: %s", _esse_specific_err)
+
             try:
                 from tools.product_detector import detect_subline_from_query
                 detected_subline = detect_subline_from_query(query)
+                # Tier 1: subline-narrowed pool (oversample потім дедуп по продукту)
+                pool_filter = {"product_canonical": "ESSE"}
                 if detected_subline:
-                    subline_docs = vdb.similarity_search(
-                        query, k=k,
-                        filter={"$and": [{"product_canonical": "ESSE"},
-                                          {"product_subline": detected_subline}]}
-                    )
-                    if len(subline_docs) >= max(3, k // 3):
-                        logger.info("RAG ESSE subline-locked: %d chunks for %s", len(subline_docs), detected_subline)
-                        # Доповнюємо k загальними ESSE chunks якщо subline дав менше k
-                        if len(subline_docs) < k:
-                            general_esse = vdb.similarity_search(
-                                query, k=k - len(subline_docs),
-                                filter={"product_canonical": "ESSE"}
-                            )
-                            seen = {(d.metadata.get("source", ""), d.page_content[:60]) for d in subline_docs}
-                            for d in general_esse:
-                                key = (d.metadata.get("source", ""), d.page_content[:60])
-                                if key not in seen:
-                                    subline_docs.append(d)
-                                    if len(subline_docs) >= k:
-                                        break
-                        return subline_docs[:k]
+                    pool_filter = {"$and": [{"product_canonical": "ESSE"},
+                                              {"product_subline": detected_subline}]}
+                # Беремо oversample (k*2) чтобы потом отфильтровать унікальні products
+                oversample_k = min(k * 2, 30)
+                pool = vdb.similarity_search(query, k=oversample_k, filter=pool_filter)
+                # Деуплікація — групуємо по source (filename = продукт у ESSE), беремо найкращий per source
+                seen_sources = set()
+                diverse = []
+                for d in pool:
+                    src = d.metadata.get("source", "") or ""
+                    # source для ESSE manual cards: "[KARTKA] ESSE_<product>.md"
+                    # для xlsx_row: "ESSE_асортимент (роздріб).xlsx" — у цьому разі ключ = перший рядок page_content
+                    if "asortiment" in src.lower() or "асортимент" in src.lower():
+                        # xlsx_row → product у першому рядку (# Назва)
+                        first_line = d.page_content.split("\n", 1)[0].strip()
+                        key = first_line[:80]
+                    else:
+                        key = src
+                    if key in seen_sources:
+                        continue
+                    seen_sources.add(key)
+                    diverse.append(d)
+                    if len(diverse) >= k:
+                        break
+                if len(diverse) >= max(3, k // 4):
+                    logger.info("RAG ESSE diversified: %d unique products for %s (subline=%s, pool=%d)",
+                                len(diverse), product_canonical, detected_subline or "any", len(pool))
+                    # Якщо subline strict вернув мало — доповнимо загальними ESSE
+                    if len(diverse) < k and detected_subline:
+                        more = vdb.similarity_search(query, k=oversample_k,
+                            filter={"product_canonical": "ESSE"})
+                        for d in more:
+                            src = d.metadata.get("source", "") or ""
+                            if "asortiment" in src.lower() or "асортимент" in src.lower():
+                                key = d.page_content.split("\n", 1)[0].strip()[:80]
+                            else:
+                                key = src
+                            if key in seen_sources:
+                                continue
+                            seen_sources.add(key)
+                            diverse.append(d)
+                            if len(diverse) >= k:
+                                break
+                    return diverse[:k]
             except Exception as _sub_err:
-                logger.warning("ESSE subline filter error: %s", _sub_err)
+                logger.warning("ESSE diversified retrieval error: %s", _sub_err)
 
         # Спроба 1: точний фільтр по продукту
         docs = vdb.similarity_search(
@@ -2313,6 +2440,14 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
             loop = asyncio.get_running_loop()
             _model = MODEL_OPENAI_COACH if mode_key in ("coach", "combo") else MODEL_OPENAI
             _has_comp = bool(_classifier_result and _classifier_result.get("competitor")) or bool(_detected_competitor)
+            # Якщо запит явно про конкурентів (intent=info_comparison АБО ключові слова) →
+            # розширюємо пошук на competitors RAG навіть без імені конкретного конкурента
+            if not _has_comp and _classifier_result:
+                _intent_for_comp = _classifier_result.get("intent", "") or ""
+                if _intent_for_comp == "info_comparison":
+                    _has_comp = True
+                elif any(m in (text or "").lower() for m in ["конкурент", "альтернатив", "аналог", "competitor"]):
+                    _has_comp = True
             _rag_k = RAG_K_BY_INTENT.get(_intent, None) if (_classifier_result and mode_key == "coach") else None
             context, sources = await loop.run_in_executor(None, get_context, search_query, mode_key, "openai", _has_comp, _product_canonical_for_rag, _rag_k, _comparison_target_for_rag, _intent_for_rag)
             if not context.strip():
@@ -2446,6 +2581,14 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
         try:
             loop = asyncio.get_running_loop()
             _has_comp = bool(_classifier_result and _classifier_result.get("competitor")) or bool(_detected_competitor)
+            # Якщо запит явно про конкурентів (intent=info_comparison АБО ключові слова) →
+            # розширюємо пошук на competitors RAG навіть без імені конкретного конкурента
+            if not _has_comp and _classifier_result:
+                _intent_for_comp = _classifier_result.get("intent", "") or ""
+                if _intent_for_comp == "info_comparison":
+                    _has_comp = True
+                elif any(m in (text or "").lower() for m in ["конкурент", "альтернатив", "аналог", "competitor"]):
+                    _has_comp = True
             _rag_k = RAG_K_BY_INTENT.get(_intent, None) if (_classifier_result and mode_key == "coach") else None
             context, sources = await loop.run_in_executor(None, get_context, search_query, mode_key, "openai", _has_comp, _product_canonical_for_rag, _rag_k, _comparison_target_for_rag, _intent_for_rag)
             claude_msg = await client_claude.messages.create(
