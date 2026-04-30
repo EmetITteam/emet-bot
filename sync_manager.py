@@ -448,15 +448,27 @@ def _batch_to_chroma_simple(docs, emb, vdb, rate_limit_sleep=10, max_retries=10)
 # ─── Построение индексов ──────────────────────────────────────────────────────
 
 def _build_index(drive, files, cfg, folder_label):
-    """Строит один индекс (OpenAI или Google) для переданного набора файлов."""
-    docs = _files_to_documents(drive, files, folder_label)
-    if not docs:
+    """Строит один индекс (OpenAI или Google) для переданного набора файлов.
+
+    Стратегія: для xlsx/pptx/docx — structured chunks (smart_import), без re-split.
+    Для PDF/Google Docs/sheets/etc. — старий шлях (extract_text → split).
+    """
+    bundle = _files_to_documents(drive, files, folder_label)
+    pre_chunked = bundle["pre_chunked"]
+    raw_docs = bundle["raw"]
+    if not pre_chunked and not raw_docs:
         return
-    chunks = RecursiveCharacterTextSplitter(
-        chunk_size=cfg["chunk_size"], chunk_overlap=cfg["overlap"]
-    ).split_documents(docs)
+
+    # Smart chunks приймаються as-is, raw_docs ріжемо splitter'ом
+    chunks = list(pre_chunked)
+    if raw_docs:
+        split_chunks = RecursiveCharacterTextSplitter(
+            chunk_size=cfg["chunk_size"], chunk_overlap=cfg["overlap"]
+        ).split_documents(raw_docs)
+        chunks.extend(split_chunks)
+
     target_dir = cfg["db"]
-    print(f"  [{cfg['provider']}] {len(chunks)} чанків → {target_dir}")
+    print(f"  [{cfg['provider']}] {len(chunks)} чанків (smart={len(pre_chunked)}, split={len(chunks) - len(pre_chunked)}) → {target_dir}")
     if cfg["provider"] == "openai":
         emb = OpenAIEmbeddings(model="text-embedding-3-small", openai_api_key=OPENAI_KEY)
         _batch_to_chroma(chunks, emb, target_dir, rate_limit_sleep=10, rate_limit_keywords=["429", "RateLimitError"])
@@ -465,29 +477,74 @@ def _build_index(drive, files, cfg, folder_label):
         _batch_to_chroma(chunks, emb, target_dir, rate_limit_sleep=30, rate_limit_keywords=["429", "RESOURCE_EXHAUSTED", "503", "UNAVAILABLE"])
 
 
+# MIME-типи office-файлів які підтримує smart_import
+_SMART_MIMES = {
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation",
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document",
+}
+_SMART_EXTS = (".xlsx", ".pptx", ".docx")
+
+
 def _files_to_documents(drive, files, folder_label=""):
-    documents = []
+    """Розділяє файли на pre_chunked (structured) і raw (flat text для splitter).
+
+    Returns: {"pre_chunked": [Document...], "raw": [Document...]}
+    """
+    from tools.smart_import import smart_extract_documents
+
+    pre_chunked = []
+    raw_docs = []
+
     for f in files:
+        mime = f.get("mimeType", "")
+        name = f["name"]
+        name_lower = name.lower()
+        category = "combo" if any(w in name_lower for w in ["протокол", "комбін", "combo"]) else "general"
+
+        # ── Smart path: xlsx/pptx/docx → structured chunks ─────────────────────
+        # Skip для certs (там тільки ім'я файлу) і для google-форматів (їх extract_text вже
+        # обробляє через export_media; smart_import не трогаємо — там немає docx-байтів)
+        is_smart = (
+            folder_label != "certs"
+            and (mime in _SMART_MIMES or name_lower.endswith(_SMART_EXTS))
+        )
+        if is_smart:
+            try:
+                buf = _download_bytes(drive, f["id"])
+                file_bytes = buf.getvalue()
+                smart_docs = smart_extract_documents(file_bytes, name, mime)
+                if smart_docs:
+                    for d in smart_docs:
+                        d.metadata.setdefault("url", f.get("webViewLink", ""))
+                        d.metadata["file_id"] = f["id"]
+                        d.metadata["folder"] = folder_label
+                        d.metadata.setdefault("category", category)
+                    pre_chunked.extend(smart_docs)
+                    continue  # skip raw fallback — вже маємо structured chunks
+                # smart_extract повернув [] → fail-soft fallback на extract_text
+            except Exception as e:
+                logger.warning(f"smart_extract failed for {name}, falling back to raw: {e}")
+
+        # ── Fallback path: raw text + splitter ─────────────────────────────────
         text = extract_text(drive, f)
         if text:
-            name_lower = f["name"].lower()
-            category = "combo" if any(w in name_lower for w in ["протокол", "комбін", "combo"]) else "general"
-            # Для сертифікатів — тільки назва файлу (PDF-тіло часто скановане/garbled)
             if folder_label == "certs":
-                page_content = f"Документ: {f['name']}"
+                page_content = f"Документ: {name}"
             else:
-                page_content = f"Документ: {f['name']}\n\n{text}"
-            documents.append(Document(
+                page_content = f"Документ: {name}\n\n{text}"
+            raw_docs.append(Document(
                 page_content=page_content,
                 metadata={
-                    "source":    f["name"],
+                    "source":    name,
                     "url":       f.get("webViewLink", ""),
                     "file_id":   f["id"],
                     "category":  category,
                     "folder":    folder_label,
                 }
             ))
-    return documents
+
+    return {"pre_chunked": pre_chunked, "raw": raw_docs}
 
 
 MAX_RATE_LIMIT_RETRIES = 10
@@ -529,6 +586,12 @@ def sync_rag_indexes():
     Для certs — тільки оновлює sync_state (SQL-пошук), без побудови RAG-індексу.
     Повертає (all_changed_names, changed_by_category).
     """
+    # Перевірка lock-файлу: якщо є — пропустити sync (для безпечних міграцій)
+    import os as _os
+    lock_path = "data/.sync_lock"
+    if _os.path.exists(lock_path):
+        logger.info("sync_rag_indexes: SKIP — lock file %s exists", lock_path)
+        return [], {}
     drive, _ = get_services()
 
     # Поточний стан БД
