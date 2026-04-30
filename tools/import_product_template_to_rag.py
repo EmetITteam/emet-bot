@@ -284,7 +284,16 @@ def main():
 
     output_dir.mkdir(parents=True, exist_ok=True)
     saved = 0
+    skipped = 0
+    # Поріг: якщо в продукті <25 полів заповнено — картка занадто бідна, перебиватиме
+    # детальніші старі chunks → регресія. Пропускаємо.
+    MIN_FIELDS_FOR_CARD = 25
     for p in products:
+        filled = sum(1 for k, v in p.items() if v and str(v).strip())
+        if filled < MIN_FIELDS_FOR_CARD:
+            print(f"  ⏭ SKIP (only {filled}/{len(COLUMN_MAP)} полів): {p['canonical'][:60]}")
+            skipped += 1
+            continue
         slug = slugify(p["canonical"])
         clinical_path = output_dir / f"{slug}__clinical.md"
         sales_path = output_dir / f"{slug}__sales.md"
@@ -292,6 +301,8 @@ def main():
         sales_path.write_text(make_sales_md(p), encoding="utf-8")
         saved += 2
     print(f"\n✅ Збережено {saved} карток у {output_dir}/")
+    if skipped:
+        print(f"⏭ Пропущено {skipped} продуктів з <{MIN_FIELDS_FOR_CARD} полів — старі chunks залишаються основним джерелом")
 
     if args.rebuild:
         # Тригернути перебудову products_openai через sync_manager

@@ -193,7 +193,7 @@ else:
 logger = logging.getLogger("emet_bot")
 
 # --- RAG & LLM CONSTANTS ---
-RAG_K_PRODUCTS         = 12    # chunks from products index (our data)
+RAG_K_PRODUCTS         = 16    # chunks from products index (our data + manual cards)
 RAG_K_COMPETITORS      = 8     # chunks from competitors index (comparisons + products like ESSE)
 RAG_K_DEFAULT          = 15    # chunks for kb/cases/operational
 RAG_K_COMBO            = 15    # chunks for combo with category filter
