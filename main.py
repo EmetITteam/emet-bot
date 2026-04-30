@@ -1167,10 +1167,12 @@ def _search_with_score(vdb, query, k, threshold=RAG_SCORE_THRESHOLD):
         return vdb.similarity_search(query, k=k)
 
 
-def get_context(query: str, mode: str = "kb", provider: str = "openai", has_competitor: bool = False, product_canonical: str | None = None, rag_k_override: int | None = None) -> tuple[str, dict]:
+def get_context(query: str, mode: str = "kb", provider: str = "openai", has_competitor: bool = False, product_canonical: str | None = None, rag_k_override: int | None = None, comparison_target: list | None = None, intent: str | None = None) -> tuple[str, dict]:
     """
     3-zone RAG search.
     product_canonical: якщо передано — фільтр чанків по metadata (product-locked retrieval).
+    comparison_target: список з 2 канонічних продуктів для balanced retrieval (info_comparison intent).
+    intent: класифікаторний intent — впливає на стратегію retrieval (info_comparison → balanced).
     """
     normalized_query = _normalize_query(query)
 
@@ -1210,17 +1212,58 @@ def get_context(query: str, mode: str = "kb", provider: str = "openai", has_comp
         return context_text, sources
 
     if mode == "combo":
-        # Combo НЕ використовує product-lock — потрібно знайти чанки з ОБОМА продуктами
-        # (наприклад "Petaran + Ellanse" — чанк може бути позначений як Petaran OR Ellanse)
+        # Combo: пріоритет на чанки зі scope=protocol (комбіновані протоколи / схеми)
+        # + обычний semantic search якщо protocol-чанків мало
         vdb = _get_vdb("products", provider)
-        docs = _search_with_score(vdb, normalized_query, RAG_K_COMBO)
-        if not docs:
-            docs = vdb.similarity_search(normalized_query, k=RAG_K_COMBO)
-        return _extract_docs(docs)
+        try:
+            protocol_docs = vdb.similarity_search(
+                normalized_query, k=RAG_K_COMBO,
+                filter={"scope": "protocol"}
+            )
+            logger.info("RAG combo: found %d scope=protocol chunks", len(protocol_docs))
+        except Exception as e:
+            logger.warning("combo scope filter failed: %s", e)
+            protocol_docs = []
+        # Загальний semantic search для добору контексту
+        general_docs = _search_with_score(vdb, normalized_query, RAG_K_COMBO)
+        # Merge: protocol_docs першими, потім general (без дублів)
+        seen_ids = set()
+        merged = []
+        for d in protocol_docs + general_docs:
+            key = (d.metadata.get("source", ""), d.page_content[:100])
+            if key in seen_ids:
+                continue
+            seen_ids.add(key)
+            merged.append(d)
+        if not merged:
+            merged = vdb.similarity_search(normalized_query, k=RAG_K_COMBO)
+        return _extract_docs(merged[:RAG_K_COMBO])
 
     # Coach mode — 3-zone logic з product-lock
     vdb_products = _get_vdb("products", provider)
     vdb_competitors = _get_vdb("competitors", provider)
+
+    # COMPARISON: якщо є 2 продукти у comparison_target → balanced retrieval
+    # (k/2 chunks per product, гарантує що обидва представлені в context'i)
+    if intent == "info_comparison" and comparison_target and len(comparison_target) >= 2:
+        _k = rag_k_override or RAG_K_PRODUCTS
+        per_prod_k = max(4, _k // 2)
+        balanced_docs = []
+        for prod in comparison_target[:2]:
+            try:
+                docs_p = vdb_products.similarity_search(
+                    normalized_query, k=per_prod_k,
+                    filter={"product_canonical": prod}
+                )
+                if not docs_p:
+                    docs_p = _search_with_product_filter(vdb_products, normalized_query, per_prod_k, prod)
+                balanced_docs.extend(docs_p)
+                logger.info("RAG comparison: %s → %d chunks", prod, len(docs_p))
+            except Exception as e:
+                logger.warning("comparison filter failed for %s: %s", prod, e)
+        # Дополним конкурентами
+        docs_comp = _search_with_score(vdb_competitors, normalized_query, RAG_K_COMPETITORS) if has_competitor else []
+        return _extract_docs(balanced_docs + docs_comp)
 
     if product_canonical:
         # PRODUCT-LOCKED: фільтруємо чанки тільки про цей продукт
@@ -1245,9 +1288,41 @@ def _search_with_product_filter(vdb, query, k, product_canonical):
     """
     Пошук з фільтром по metadata.product_canonical.
     Повертає topK найрелевантніших чанків цього продукту.
+    Для ESSE — додатково намагаємося звузити по product_subline якщо запит явно
+    вказує на конкретну підлінію (Sensitive, Sun, Concealers, Plus тощо).
     Якщо для продукту мало чанків — розширюємо пошук на суміжні варіанти.
     """
     try:
+        # Для ESSE — пробуємо subline-narrowed search першою
+        if product_canonical == "ESSE":
+            try:
+                from tools.product_detector import detect_subline_from_query
+                detected_subline = detect_subline_from_query(query)
+                if detected_subline:
+                    subline_docs = vdb.similarity_search(
+                        query, k=k,
+                        filter={"$and": [{"product_canonical": "ESSE"},
+                                          {"product_subline": detected_subline}]}
+                    )
+                    if len(subline_docs) >= max(3, k // 3):
+                        logger.info("RAG ESSE subline-locked: %d chunks for %s", len(subline_docs), detected_subline)
+                        # Доповнюємо k загальними ESSE chunks якщо subline дав менше k
+                        if len(subline_docs) < k:
+                            general_esse = vdb.similarity_search(
+                                query, k=k - len(subline_docs),
+                                filter={"product_canonical": "ESSE"}
+                            )
+                            seen = {(d.metadata.get("source", ""), d.page_content[:60]) for d in subline_docs}
+                            for d in general_esse:
+                                key = (d.metadata.get("source", ""), d.page_content[:60])
+                                if key not in seen:
+                                    subline_docs.append(d)
+                                    if len(subline_docs) >= k:
+                                        break
+                        return subline_docs[:k]
+            except Exception as _sub_err:
+                logger.warning("ESSE subline filter error: %s", _sub_err)
+
         # Спроба 1: точний фільтр по продукту
         docs = vdb.similarity_search(
             query, k=k,
@@ -1703,8 +1778,13 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
                 logger.info("DialogState: topic shift detected, resetting chat_history (was %d msgs)", len(chat_history))
                 chat_history = []
             await state.update_data(dialog_state=_curr_dialog_state)
+            # Експортуємо comparison_target + intent для retrieval (use в get_context)
+            _comparison_target_for_rag = _curr_dialog_state.get("comparison_target") or []
+            _intent_for_rag = _curr_dialog_state.get("intent") or ""
         except Exception as _ds_err:
             logger.warning("dialog_state error: %s", _ds_err)
+            _comparison_target_for_rag = []
+            _intent_for_rag = ""
 
         # Bot retry: підвантажуємо попередню bot turn у контекст і додаємо retry-інструкцію
         # для system prompt. Це закриває кейси типу #741 («Чому ти одразу не зазначив...»)
@@ -2234,7 +2314,7 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
             _model = MODEL_OPENAI_COACH if mode_key in ("coach", "combo") else MODEL_OPENAI
             _has_comp = bool(_classifier_result and _classifier_result.get("competitor")) or bool(_detected_competitor)
             _rag_k = RAG_K_BY_INTENT.get(_intent, None) if (_classifier_result and mode_key == "coach") else None
-            context, sources = await loop.run_in_executor(None, get_context, search_query, mode_key, "openai", _has_comp, _product_canonical_for_rag, _rag_k)
+            context, sources = await loop.run_in_executor(None, get_context, search_query, mode_key, "openai", _has_comp, _product_canonical_for_rag, _rag_k, _comparison_target_for_rag, _intent_for_rag)
             if not context.strip():
                 _context_was_empty = True
             context = filter_competitor_lines(context, _classifier_result)
@@ -2332,7 +2412,7 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
             loop = asyncio.get_running_loop()
             _has_comp_g = bool(_classifier_result and _classifier_result.get("competitor")) or bool(_detected_competitor)
             _rag_k_g = RAG_K_BY_INTENT.get(_intent, None) if (_classifier_result and mode_key == "coach") else None
-            context, sources = await loop.run_in_executor(None, get_context, search_query, mode_key, "google", _has_comp_g, _product_canonical_for_rag, _rag_k_g)
+            context, sources = await loop.run_in_executor(None, get_context, search_query, mode_key, "google", _has_comp_g, _product_canonical_for_rag, _rag_k_g, _comparison_target_for_rag, _intent_for_rag)
             # Structured chat for Gemini — separate system, history, and user turns
             gemini_contents = [{"role": "user", "parts": [{"text": _system_prompt}]},
                                {"role": "model", "parts": [{"text": "Зрозуміло, працюю за інструкціями."}]}]
@@ -2367,7 +2447,7 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
             loop = asyncio.get_running_loop()
             _has_comp = bool(_classifier_result and _classifier_result.get("competitor")) or bool(_detected_competitor)
             _rag_k = RAG_K_BY_INTENT.get(_intent, None) if (_classifier_result and mode_key == "coach") else None
-            context, sources = await loop.run_in_executor(None, get_context, search_query, mode_key, "openai", _has_comp, _product_canonical_for_rag, _rag_k)
+            context, sources = await loop.run_in_executor(None, get_context, search_query, mode_key, "openai", _has_comp, _product_canonical_for_rag, _rag_k, _comparison_target_for_rag, _intent_for_rag)
             claude_msg = await client_claude.messages.create(
                 model=MODEL_CLAUDE,
                 max_tokens=LLM_CLAUDE_MAX_TOKENS,

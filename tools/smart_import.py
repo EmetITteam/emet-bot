@@ -137,8 +137,59 @@ def extract_pptx_slides(file_bytes: bytes, source_name: str) -> Iterator[Documen
 # DOCX — split по H1/H2 заголовках, fallback на 1200 chars
 # ============================================================
 
+_HEADING_RE = re.compile(r"heading\s*[1-6]", re.IGNORECASE)
+_STYLE_ID_RE = re.compile(r"^heading[1-6]$", re.IGNORECASE)
+
+
+def _is_heading_style(para) -> bool:
+    """Detects H1-H6 / Title across en/uk/ru locales.
+
+    Word docx files authored in Ukrainian/Russian Word use localized style names
+    ('Заголовок 1', 'Заголовок 2'); style.style_id stays locale-independent
+    ('Heading1', 'Heading2'). Also accepts 'Title' / 'Назва' / 'Название'.
+    """
+    if not para.style:
+        return False
+    name = (para.style.name or "").lower()
+    sid = (getattr(para.style, "style_id", "") or "").lower()
+    if _HEADING_RE.search(name):
+        return True
+    if _STYLE_ID_RE.match(sid):
+        return True
+    if "title" in name or "назв" in name or "заголов" in name:
+        return True
+    return False
+
+
+def _is_visual_heading(para, text: str) -> bool:
+    """Fallback heuristic: many EMET docx files don't use heading styles, just bold/all-caps.
+
+    Treat as heading if: short (<100 chars), bold OR mostly uppercase (>60% letters upper),
+    doesn't end with sentence punctuation, has at least 1 letter.
+    """
+    if len(text) > 100 or len(text) < 2:
+        return False
+    if text[-1] in ".,;:?!»":
+        return False
+    letters = [c for c in text if c.isalpha()]
+    if not letters:
+        return False
+    # All-caps check (>60% upper among letters)
+    upper_ratio = sum(1 for c in letters if c.isupper()) / len(letters)
+    if upper_ratio >= 0.6:
+        return True
+    # Bold check: ALL runs in para are bold (not just first)
+    try:
+        runs = list(para.runs)
+        if runs and all(r.bold for r in runs if r.text.strip()):
+            return True
+    except Exception:
+        pass
+    return False
+
+
 def extract_docx_sections(file_bytes: bytes, source_name: str) -> Iterator[Document]:
-    """docx → один Document на секцію (H1/H2). Якщо немає заголовків — fallback на параграфи."""
+    """docx → один Document на секцію (H1-H6/Title). Якщо немає заголовків — fallback на параграфи."""
     from docx import Document as DocxDocument
     doc = DocxDocument(io.BytesIO(file_bytes))
     sections = []  # list of (heading, list of paragraphs)
@@ -148,8 +199,7 @@ def extract_docx_sections(file_bytes: bytes, source_name: str) -> Iterator[Docum
         text = para.text.strip()
         if not text:
             continue
-        style = (para.style.name or "").lower() if para.style else ""
-        if "heading 1" in style or "heading 2" in style or "title" in style:
+        if _is_heading_style(para) or _is_visual_heading(para, text):
             # Зберігаємо попередню секцію
             if current_paras:
                 sections.append((current_heading, current_paras))
@@ -202,113 +252,24 @@ def extract_docx_sections(file_bytes: bytes, source_name: str) -> Iterator[Docum
 
 
 # ============================================================
-# Helpers
+# Detector helpers — re-export from product_detector for backward-compat
+# (Single source of truth: tools/product_detector.py)
 # ============================================================
 
+from tools.product_detector import (
+    detect_product_canonical as _shared_detect_canonical,
+    detect_subline as _shared_detect_subline,
+)
+
+
 def _detect_product_canonical_from_text(text: str, source_name: str = "") -> str:
-    """Мапінг ключових слів → канонічна назва EMET-продукту.
-
-    source_name (filename) має пріоритет над content — для конкурентних docs:
-    "Neuronox_Competitors_MASTER.docx" → Neuronox, навіть якщо в тексті порівнюють з Neuramis.
-    """
-    src = source_name.lower()
-    t = text.lower()
-
-    # ── STEP 1: Strong filename signals (приоритет для product-specific файлів) ──
-    if "neuronox" in src or "нейронокс" in src:
-        return "Neuronox"
-    if any(k in src for k in ["exoxe", "ехохе", "ексоксе", "_exoxe_", "exoxe_"]):
-        return "EXOXE"
-    if "neuramis" in src or "нейрамис" in src or "нейраміс" in src:
-        return "Neuramis"
-    if "magnox" in src or "магнокс" in src:
-        return "Magnox"
-    if any(k in src for k in ["whitening", "вайтенинг", "вайтенінг"]):
-        return "HP Cell Vitaran Whitening"
-    if any(k in src for k in ["tox eye", "тохтай", "токс ай", "vitaran tox", "_tox_", "vitaran_tox"]):
-        return "HP Cell Vitaran Tox Eye"
-    if any(k in src for k in ["skin healer", "dual serum", "vitaran exosome",
-                               "azulene", "sleeping cream", "wrapping serum"]):
-        return "Vitaran Skin Healer"
-    if any(k in src for k in ["petaran", "петаран"]):
-        return "Petaran"
-    if any(k in src for k in ["ellans", "ellanse", "елансе"]):
-        return "Ellansé"
-    if "iuse hair" in src or "iuse_hair" in src:
-        return "IUSE HAIR REGROWTH"
-    if "iuse collagen" in src or "iuse_collagen" in src:
-        return "IUSE Collagen"
-    if "iuse skin" in src or "skinbooster" in src or "skin booster" in src or "iuse_sb" in src or "впв skin" in src:
-        return "IUSE SKINBOOSTER HA 20"
-    if "esse" in src or "ессе" in src:
-        return "ESSE"
-    if any(k in src for k in ["vitaran iii", "vitaran_iii", "vitaran ii", "vitaran_ii"]):
-        return "HP Cell Vitaran i"
-    if any(k in src for k in ["vitaran i ", "vitaran_i", "hp cell vitaran"]):
-        return "HP Cell Vitaran i"
-
-    # ── STEP 2: Content matching (для файлів без явних маркерів в назві) ──
-    if any(k in t for k in ["whitening", "вайтенинг", "вайтенінг"]):
-        return "HP Cell Vitaran Whitening"
-    if any(k in t for k in ["tox eye", "тохтай", "токс ай"]):
-        return "HP Cell Vitaran Tox Eye"
-    if any(k in t for k in ["skin healer", "vitaran exosome", "dual serum",
-                             "azulene", "sleeping cream", "wrapping serum"]):
-        return "Vitaran Skin Healer"
-    if any(k in t for k in ["vitaran iii", "vitaran_iii", "vitaran ii", "vitaran_ii"]):
-        return "HP Cell Vitaran i"
-    if any(k in t for k in ["vitaran i ", "vitaran i\n", "vitaran_i", "hp cell vitaran"]):
-        return "HP Cell Vitaran i"
-    if "vitaran" in t or "вітаран" in t:
-        return "Vitaran"
-    if any(k in t for k in ["ellans", "елансе", "ellanse"]):
-        return "Ellansé"
-    if any(k in t for k in ["petaran", "петаран"]):
-        return "Petaran"
-    if any(k in t for k in ["exoxe", "ехохе", "ексоксе", "экзосом"]):
-        return "EXOXE"
-    if "neuronox" in t or "нейронокс" in t:
-        return "Neuronox"
-    if "neuramis" in t or "нейрамис" in t or "нейраміс" in t:
-        return "Neuramis"
-    if "iuse skin" in t or "скінбустер" in t or "skinbooster" in t or "skin booster" in t:
-        return "IUSE SKINBOOSTER HA 20"
-    if "iuse hair" in t or "iuse_hair" in t:
-        return "IUSE HAIR REGROWTH"
-    if "iuse collagen" in t:
-        return "IUSE Collagen"
-    if "esse" in t or "ессе" in t:
-        return "ESSE"
-    if "magnox" in t or "магнокс" in t:
-        return "Magnox"
-    return ""
+    """Backward-compat wrapper. Calls shared product_detector. Always returns str (not None)."""
+    return _shared_detect_canonical(source_name=source_name, content=text) or ""
 
 
 def _detect_subline(sheet_name: str, content: str) -> str:
-    """Для ESSE визначає лінію (Core/Sensitive/Plus/тощо).
-
-    Note: cyrillic Е (U+0415) часто міксується з ASCII E в назвах ('Лінійка ЕSSE CORE').
-    Тому нормалізуємо: cyrillic Е→E, е→e перед matching.
-    """
-    combined = (sheet_name + " " + content[:300]).lower()
-    # Replace Ukrainian cyrillic e/Е with ASCII counterparts (e.g. "еsse" → "esse")
-    combined = combined.replace("е", "e").replace("Е", "E")  # Cyrillic e/Е → ASCII
-
-    if "sensitive" in combined or "сeнсітів" in combined or "сeнситив" in combined:
-        return "Esse Sensitive"
-    if "esse plus" in combined or "esse+" in combined or "лінійка esse plus" in combined:
-        return "Esse Plus"
-    if "professional" in combined or "профeсійн" in combined:
-        return "Esse Professional"
-    if "esse core" in combined or "лінійка esse core" in combined:
-        return "Esse Core"
-    if "консилeр" in combined or "concealer" in combined:
-        return "Esse Concealers"
-    if "сонцeзахис" in combined or "foundation" in combined or "тональн" in combined:
-        return "Esse Sun Protection"
-    if "набор" in combined or "набір" in combined or "set" in combined:
-        return "Esse Sets"
-    return ""
+    """Backward-compat wrapper. Calls shared product_detector."""
+    return _shared_detect_subline(sheet_name=sheet_name, content=content)
 
 
 # ============================================================

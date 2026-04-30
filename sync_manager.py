@@ -300,101 +300,42 @@ def _split_coach_to_products_competitors():
         print(f"  [split] manual cards error: {e}")
 
     # Filter out heading-only / empty chunks (sync bug protection)
+    # Smart-extracted chunks (xlsx_row/pptx_slide/docx_section) and manual cards мають нижчий поріг
+    # бо вже структурно осмислені; raw splits — вищий поріг щоб відсіяти garbage.
+    SMART_CHUNK_TYPES = {"xlsx_row", "pptx_slide", "docx_section"}
+
     def _has_real_content(d):
-        # Видаляємо markdown-заголовки та пробіли — рахуємо реальні символи
         text = d.page_content
+        # Знайти першу не-heading лінію
+        has_body = False
         for line in text.split("\n"):
             s = line.strip()
             if s and not s.startswith("#"):
-                return len(text.strip()) >= 250  # мінімум 250 символів реального контенту
-        return False
+                has_body = True
+                break
+        if not has_body:
+            return False
+        # Smart chunks і manual cards: 80 chars (структурно гарантовано осмислені)
+        chunk_type = d.metadata.get("chunk_type", "") or ""
+        url = d.metadata.get("url", "") or ""
+        if chunk_type in SMART_CHUNK_TYPES or url == "manual_card":
+            return len(text.strip()) >= 80
+        # Raw splits — 250 chars (як було, відсіюємо обрізки)
+        return len(text.strip()) >= 250
 
     products = [d for d in products if _has_real_content(d)]
     competitors = [d for d in competitors if _has_real_content(d)]
 
-    # Enrich metadata with product_canonical for product-locked RAG retrieval
-    def _detect_product_canonical(doc):
-        """Визначає канонічний продукт з source filename + content."""
-        src = (doc.metadata.get("source", "") or "").lower()
-        text = (doc.page_content or "")[:500].lower()
-        combined = src + " " + text
-
-        # Vitaran варіанти — спочатку специфічні, потім generic
-        if any(k in combined for k in ["whitening", "вайтенинг", "вайтенінг"]):
-            return "HP Cell Vitaran Whitening"
-        if any(k in combined for k in ["tox eye", "тохтай", "токс ай", "tox&face"]):
-            return "HP Cell Vitaran Tox Eye"
-        if any(k in combined for k in ["skin healer", "скін хілер"]):
-            return "Vitaran Skin Healer"
-        if any(k in combined for k in ["vitaran iii", "vitaran_iii", "vitaran ii", "vitaran_ii"]):
-            return "HP Cell Vitaran iII"
-        if any(k in combined for k in ["vitaran i ", "vitaran i\n", "vitaran_i", "hp cell vitaran i", "vitaran i.", "vitaran i,"]):
-            return "HP Cell Vitaran i"
-        if any(k in combined for k in ["vitaran", "вітаран", "витаран", "hp cell"]):
-            return "Vitaran"
-
-        if any(k in combined for k in ["ellans", "елансе", "ellanse"]):
-            return "Ellansé"
-        if any(k in combined for k in ["petaran", "петаран", "poly plla", "полі-l-молочна"]):
-            return "Petaran"
-        if any(k in combined for k in ["exoxe", "ексоксе", "экзосом"]):
-            return "EXOXE"
-        if "neuramis" in combined or "нейрамис" in combined or "нейраміс" in combined:
-            return "Neuramis"
-        if "neuronox" in combined or "нейронокс" in combined:
-            return "Neuronox"
-        if "iuse skin" in combined or "скінбустер" in combined or "skinbooster" in combined or "iuse_sb" in combined:
-            return "IUSE SKINBOOSTER HA 20"
-        if "iuse hair" in combined:
-            return "IUSE HAIR REGROWTH"
-        if "iuse collagen" in combined:
-            return "IUSE Collagen"
-        if "esse" in combined or "ессе" in combined:
-            return "ESSE"
-        if "magnox" in combined or "магнокс" in combined:
-            return "Magnox"
-        if "iuse" in combined:
-            return "IUSE"
-        return None
-
-    def _detect_scope(doc):
-        """Визначає рівень специфічності чанка: line / product / ingredient / protocol.
-        line — загальні характеристики лінії (часто одночасна згадка >=2 продуктів того ж бренду без фокусу)
-        product — конкретний продукт (одна назва домінує)
-        ingredient — про окремий компонент (PLLA, PDRN, PCL...)
-        protocol — про процедуру / схему / комбо
-        """
-        src = (doc.metadata.get("source", "") or "").lower()
-        text = (doc.page_content or "").lower()
-        # protocol — за source або тексту
-        if any(k in src for k in ["комбін", "протокол", "combo", "protokol"]):
-            return "protocol"
-        if any(k in text[:200] for k in ["протокол", "розведення", "схема процедур", "техніка"]):
-            return "protocol"
-        # ingredient — пояснення про компонент окремо
-        if any(k in text[:300] for k in [" plla ", "поліl-молочна", "поликапролак", "пдрн", " pdrn ",
-                                          " pcl ", "поликапролактон", "гіалуронова кислот", "hyaluronic"]):
-            if not any(p in text[:100] for p in ["petaran", "петаран", "ellans", "елансе", "vitaran", "вітаран",
-                                                   "neuramis", "нейрамис", "iuse"]):
-                return "ingredient"
-        # line — згадка >=2 продуктів того самого бренду / lineup keywords
-        line_markers = [
-            ("esse", ["sensitive", "sensitive plus", "core", "professional", "лінійка esse", "лінія esse",
-                      "пробіотична космецевтика", "лінійки", "асортимент"]),
-            ("vitaran", ["лінійка vitaran", "лінія vitaran", "all variants", "усі варіанти"]),
-            ("iuse", ["лінійка iuse", "лінія iuse", "skinbooster і hair", "колаген і hair"]),
-        ]
-        for brand, markers in line_markers:
-            if brand in text[:400] and any(m in text[:400] for m in markers):
-                return "line"
-        # default
-        return "product"
+    # Enrich metadata with product_canonical + scope (single source of truth)
+    from tools.product_detector import detect_product_canonical, detect_scope
 
     for d in products + competitors:
-        canonical = _detect_product_canonical(d)
+        src = d.metadata.get("source", "") or ""
+        content = d.page_content or ""
+        canonical = detect_product_canonical(source_name=src, content=content)
         if canonical:
             d.metadata["product_canonical"] = canonical
-        d.metadata["scope"] = _detect_scope(d)
+        d.metadata["scope"] = detect_scope(source_name=src, content=content)
 
     # Лог розподілу по продуктам + scope
     from collections import Counter

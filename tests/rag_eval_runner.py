@@ -34,7 +34,71 @@ from langchain_openai import OpenAIEmbeddings
 SMART_CHUNK_TYPES = {"xlsx_row", "pptx_slide", "docx_section", "docx_chunked"}
 
 
-def evaluate_index(index_path: str, queries: list[dict], k: int = 16) -> dict:
+def _smart_retrieve(vdb, query: str, k: int, case: dict) -> list:
+    """Симулює get_context логіку: per-category routing + filters.
+
+    - category=combo → пріоритет scope=protocol + general merge
+    - category=comparison з 2 expected_products → balanced
+    - category=esse + detected_subline → subline-narrowed
+    - category=expected_product → product-locked
+    - default → semantic search
+    """
+    category = case.get("category", "")
+    expected = case.get("expected_product")
+
+    # COMBO: scope=protocol filter
+    if category == "combo":
+        try:
+            protocol_docs = vdb.similarity_search(query, k=k, filter={"scope": "protocol"})
+        except Exception:
+            protocol_docs = []
+        general = vdb.similarity_search(query, k=k)
+        seen, merged = set(), []
+        for d in protocol_docs + general:
+            key = (d.metadata.get("source", ""), d.page_content[:100])
+            if key in seen:
+                continue
+            seen.add(key)
+            merged.append(d)
+        return merged[:k]
+
+    # ESSE with subline: try subline-narrowed first
+    if category == "esse" and expected == "ESSE":
+        try:
+            from tools.product_detector import detect_subline_from_query
+            sub = detect_subline_from_query(query)
+            if sub:
+                sub_docs = vdb.similarity_search(query, k=k,
+                    filter={"$and": [{"product_canonical": "ESSE"}, {"product_subline": sub}]})
+                if len(sub_docs) >= max(3, k // 3):
+                    if len(sub_docs) < k:
+                        general = vdb.similarity_search(query, k=k - len(sub_docs),
+                            filter={"product_canonical": "ESSE"})
+                        seen = {(d.metadata.get("source", ""), d.page_content[:60]) for d in sub_docs}
+                        for d in general:
+                            key = (d.metadata.get("source", ""), d.page_content[:60])
+                            if key not in seen:
+                                sub_docs.append(d)
+                                if len(sub_docs) >= k:
+                                    break
+                    return sub_docs[:k]
+        except Exception:
+            pass
+
+    # Product-locked для конкретного expected продукту
+    if expected:
+        try:
+            docs = vdb.similarity_search(query, k=k, filter={"product_canonical": expected})
+            if len(docs) >= max(3, k // 4):
+                return docs
+        except Exception:
+            pass
+
+    # Default: semantic
+    return vdb.similarity_search(query, k=k)
+
+
+def evaluate_index(index_path: str, queries: list[dict], k: int = 16, smart_routing: bool = False) -> dict:
     if not os.path.isdir(index_path):
         raise FileNotFoundError(f"Index not found: {index_path}")
 
@@ -53,8 +117,11 @@ def evaluate_index(index_path: str, queries: list[dict], k: int = 16) -> dict:
         keywords = case.get("expected_keywords", []) or []
         category = case.get("category", "other")
 
-        # Retrieval (top-K, just relevance, no MMR for this eval)
-        docs = vdb.similarity_search(q, k=k)
+        # Retrieval — smart_routing симулює per-category get_context логіку
+        if smart_routing:
+            docs = _smart_retrieve(vdb, q, k, case)
+        else:
+            docs = vdb.similarity_search(q, k=k)
 
         # Metrics
         top1_match = 1 if (expected and docs and docs[0].metadata.get("product_canonical") == expected) else 0
@@ -145,6 +212,8 @@ def main():
     parser.add_argument("--queries", default="tests/rag_eval_queries.json")
     parser.add_argument("--output", required=True, help="Output JSON path for metrics")
     parser.add_argument("--k", type=int, default=16)
+    parser.add_argument("--smart-routing", action="store_true",
+                        help="Симулює per-category retrieval (combo→protocol filter, esse→subline, etc)")
     args = parser.parse_args()
 
     with open(args.queries, encoding="utf-8") as f:
@@ -155,7 +224,7 @@ def main():
     print(f"Queries: {len(queries)} (k={args.k})")
     print()
 
-    summary = evaluate_index(args.index, queries, args.k)
+    summary = evaluate_index(args.index, queries, args.k, smart_routing=args.smart_routing)
 
     with open(args.output, "w", encoding="utf-8") as f:
         json.dump(summary, f, ensure_ascii=False, indent=2)
