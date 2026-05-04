@@ -3386,7 +3386,8 @@ CERTS_BRANDS = [
     ("IUSE",        "IUSE"),
     ("EXOXE",       "EXOXE"),
     ("SkinBooster", "SkinBooster"),
-    ("Magnox",      "Magnox"),
+    # Magnox прихований — поки що немає сертифікатів у Drive. Розкоментувати коли з'являться.
+    # ("Magnox",      "Magnox"),
 ]
 
 # Патерни для пошуку файлів по бренду (LIKE %pattern%) у sync_state.
