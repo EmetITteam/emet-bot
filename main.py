@@ -238,6 +238,7 @@ class UserState(StatesGroup):
     lms_test_active = State()
     waiting_for_json = State()
     voice_confirm = State()  # Подтверждение распознанного голоса/фото
+    waiting_feedback_comment = State()  # Очікування коментаря після 👎
 
 # --- 3. СИСТЕМНЫЕ ПРОМПТЫ ---
 from prompts import SYSTEM_PROMPTS
@@ -256,7 +257,8 @@ def get_main_menu():
     builder.button(text="💼 Sales Коуч", callback_data="set_coach")
     builder.button(text="🎓 Навчання і тести", callback_data="set_learn")
     builder.button(text="🔍 Розбір кейсів", callback_data="set_cases")
-    builder.button(text="⚙️ Операційні питання", callback_data="set_operational")
+    # Операційні питання тимчасово приховані — блок порожній, повернемо коли наповнимо контентом
+    # builder.button(text="⚙️ Операційні питання", callback_data="set_operational")
     # Онбординг тимчасово прихований — блок порожній, повернемо коли наповнимо контентом
     # builder.button(text="🌱 Онбординг", callback_data="set_onboarding")
     builder.button(text="📸 До/Після", callback_data="set_before_after")
@@ -334,7 +336,10 @@ def init_db():
                  level TEXT DEFAULT 'junior',
                  registered_at TEXT,
                  last_active TEXT,
-                 is_active INTEGER DEFAULT 1)''')
+                 is_active INTEGER DEFAULT 1,
+                 seen_disclaimer INTEGER DEFAULT 0)''')
+            # Idempotent migration — для існуючих БД додаємо колонку якщо нема
+            cur.execute("ALTER TABLE users ADD COLUMN IF NOT EXISTS seen_disclaimer INTEGER DEFAULT 0")
 
             # --- Онбординг: шаблонные пункты чеклиста ---
             cur.execute('''CREATE TABLE IF NOT EXISTS onboarding_items
@@ -408,9 +413,12 @@ def init_db():
                  user_id TEXT,
                  rating INTEGER,
                  mode TEXT,
+                 comment TEXT,
                  created_at TIMESTAMP DEFAULT NOW())''')
             cur.execute("CREATE INDEX IF NOT EXISTS idx_feedback_log ON feedback(log_id)")
             cur.execute("CREATE INDEX IF NOT EXISTS idx_feedback_mode ON feedback(mode)")
+            # Idempotent migration для існуючих БД
+            cur.execute("ALTER TABLE feedback ADD COLUMN IF NOT EXISTS comment TEXT")
 
             # Спроби входу в адмін-панель (brute-force захист, виживає після рестарту)
             cur.execute('''CREATE TABLE IF NOT EXISTS admin_login_attempts
@@ -2875,6 +2883,32 @@ async def send_test_analysis(message: types.Message, wrong_answers: list, score_
 
 # --- 9. ТЕЛЕГРАМ ОБРАБОТЧИКИ ---
 
+PILOT_DISCLAIMER = (
+    "⚠️ *Це бета-версія AI-асистента EMET*\n\n"
+    "Бот ще навчається на ваших запитах і іноді може помилятися.\n\n"
+    "🔧 *Якщо бот помилився:*\n"
+    "1. Натисніть 👎 під відповіддю\n"
+    "2. Одним рядком напишіть що саме було не так\n\n"
+    "Кожна ваша оцінка робить бот точнішим.\n"
+    "Дякую що допомагаєте! 🙏"
+)
+
+
+async def _maybe_show_disclaimer(message: types.Message) -> bool:
+    """Показує пілотний дисклеймер один раз на користувача. Returns True якщо показав."""
+    user_id = str(message.from_user.id)
+    try:
+        row = db.query("SELECT seen_disclaimer FROM users WHERE user_id=%s", (user_id,), fetchone=True)
+        if row and row[0] == 1:
+            return False  # Вже бачив
+        await message.answer(PILOT_DISCLAIMER, parse_mode="Markdown")
+        db.execute("UPDATE users SET seen_disclaimer=1 WHERE user_id=%s", (user_id,))
+        return True
+    except Exception as e:
+        logger.warning("disclaimer check error: %s", e)
+        return False
+
+
 @dp.message(Command("start"))
 async def cmd_start(message: types.Message, state: FSMContext):
     user_id = message.from_user.id
@@ -2885,6 +2919,7 @@ async def cmd_start(message: types.Message, state: FSMContext):
         upsert_user(user_id, message.from_user.username, message.from_user.first_name)
         name = message.from_user.first_name or message.from_user.username or "колего"
         await state.set_state(UserState.mode_kb)
+        await _maybe_show_disclaimer(message)
         await message.answer(
             f"Вітаю, {name}! 👋 Я — AI-асистент EMET.\n\nОберіть розділ:",
             reply_markup=get_main_menu()
@@ -2898,6 +2933,7 @@ async def cmd_start(message: types.Message, state: FSMContext):
         upsert_user(user_id, message.from_user.username, message.from_user.first_name)
         name = message.from_user.first_name or message.from_user.username or "колего"
         await state.set_state(UserState.mode_kb)
+        await _maybe_show_disclaimer(message)
         await message.answer(
             f"Вітаю, {name}! 👋 Я — AI-асистент EMET.\n\nОберіть розділ:",
             reply_markup=get_main_menu()
@@ -2968,9 +3004,13 @@ async def handle_email_input(message: types.Message, state: FSMContext):
     await state.set_state(UserState.mode_kb)
     await message.answer(
         f"✅ Доступ надано, {name}!\n\n"
-        f"Ваша роль: *{role}*\n\n"
-        "Оберіть розділ:",
+        f"Ваша роль: *{role}*",
         parse_mode="Markdown",
+    )
+    # Дисклеймер пілоту — для новопризначених юзерів обов'язково
+    await _maybe_show_disclaimer(message)
+    await message.answer(
+        "Оберіть розділ:",
         reply_markup=get_main_menu()
     )
 
@@ -3019,10 +3059,6 @@ async def cmd_help(message: types.Message):
         "Після тесту — AI-аналіз: сильні/слабкі сторони та рекомендації.\n\n"
         "*🔍 Розбір кейсів*\n"
         "Аналіз реальних ситуацій з клієнтами та лікарями.\n\n"
-        "*⚙️ Операційні питання*\n"
-        "Логістика, замовлення, документообіг, склад.\n\n"
-        "*🌱 Онбординг*\n"
-        "Чеклист першого тижня для нових співробітників.\n\n"
         "*🎤 Голос і фото*\n"
         "Надішли голосове повідомлення або скріншот — розпізнаю і відповім.\n\n"
         "Натисніть /start щоб відкрити меню."
@@ -3468,7 +3504,7 @@ async def go_home(callback: types.CallbackQuery, state: FSMContext):
 
 # --- FEEDBACK (👍/👎) ---
 @dp.callback_query(F.data.startswith("fb_"))
-async def handle_feedback(callback: types.CallbackQuery):
+async def handle_feedback(callback: types.CallbackQuery, state: FSMContext):
     parts = callback.data.split("_")
     if len(parts) != 3:
         await callback.answer()
@@ -3485,14 +3521,67 @@ async def handle_feedback(callback: types.CallbackQuery):
         # Отримуємо mode з logs
         log_row = db.query("SELECT mode FROM logs WHERE id=%s", (log_id,), fetchone=True)
         mode = log_row[0] if log_row else "unknown"
+        # INSERT без comment (буде додано якщо менеджер напише після 👎)
         db.execute(
             "INSERT INTO feedback (log_id, user_id, rating, mode) VALUES (%s,%s,%s,%s)",
             (log_id, str(callback.from_user.id), rating, mode)
         )
-        await callback.message.edit_text("Дякую за оцінку!" if rating == 1 else "Зрозуміло, працюємо над покращенням!")
+        if rating == 1:
+            # Лайк — просто дякуємо, нічого не питаємо
+            await callback.message.edit_text("Дякую за оцінку! 👍")
+        else:
+            # Дизлайк — запитуємо коментар (опційно, можна /skip)
+            # Зберігаємо log_id у state щоб наступне повідомлення прив'язати до feedback
+            await state.update_data(_pending_feedback_log_id=log_id)
+            # Зберігаємо попередній стан щоб після /skip повернутися
+            curr_state = await state.get_state()
+            await state.update_data(_state_before_feedback=curr_state)
+            await state.set_state(UserState.waiting_feedback_comment)
+            await callback.message.edit_text(
+                "👎 Дякую. Що було не так? Опишіть одним рядком (або напишіть /skip щоб пропустити).\n\n"
+                "_Ваш коментар допоможе зробити бот точнішим._",
+                parse_mode="Markdown"
+            )
     except Exception as e:
         logger.error("feedback handler error: %s", e)
     await callback.answer()
+
+
+@dp.message(StateFilter(UserState.waiting_feedback_comment))
+async def handle_feedback_comment(message: types.Message, state: FSMContext):
+    """Зберігає коментар менеджера після 👎. /skip пропускає."""
+    text = (message.text or "").strip()
+    data = await state.get_data()
+    log_id = data.get("_pending_feedback_log_id")
+    prev_state = data.get("_state_before_feedback")
+
+    # Очищаємо тимчасові дані
+    await state.update_data(_pending_feedback_log_id=None, _state_before_feedback=None)
+
+    # Повертаємо попередній стан (kb/coach/combo тощо)
+    if prev_state:
+        await state.set_state(prev_state)
+    else:
+        await state.set_state(UserState.mode_kb)
+
+    if text == "/skip" or not text:
+        await message.answer("Гаразд, зрозумів. Працюємо над покращенням!")
+        return
+
+    if log_id:
+        try:
+            db.execute(
+                "UPDATE feedback SET comment=%s WHERE log_id=%s AND user_id=%s",
+                (text[:500], log_id, str(message.from_user.id))
+            )
+            logger.info("Feedback comment saved for log_id=%s: %r", log_id, text[:100])
+        except Exception as e:
+            logger.error("save feedback comment error: %s", e)
+
+    await message.answer(
+        "Дякую! 🙏 Ваш коментар зафіксовано — він допоможе зробити бот точнішим.\n\n"
+        "Можете продовжувати ставити запитання."
+    )
 
 
 # --- LMS: СПИСОК КУРСОВ ---
