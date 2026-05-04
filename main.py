@@ -2089,9 +2089,13 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
     if mode_key == "certs":
         brand = detect_brand(text)
         if brand:
+            # Беремо UA/RU/EN-патерни для бренду (fallback — сам бренд)
+            patterns = CERTS_BRAND_PATTERNS.get(brand, [brand.lower()])
+            where_clauses = " OR ".join(["LOWER(file_name) LIKE %s"] * len(patterns))
+            sql_args = tuple(f"%%{p}%%" for p in patterns)
             rows = db.query_dict(
-                "SELECT file_name, file_id FROM sync_state WHERE folder_label = 'certs' AND LOWER(file_name) LIKE %s ORDER BY file_name",
-                (f"%%{brand.lower()}%%",)
+                f"SELECT file_name, file_id FROM sync_state WHERE folder_label = 'certs' AND ({where_clauses}) ORDER BY file_name",
+                sql_args
             )
         else:
             rows = db.query_dict(
@@ -3385,6 +3389,21 @@ CERTS_BRANDS = [
     ("Magnox",      "Magnox"),
 ]
 
+# Патерни для пошуку файлів по бренду (LIKE %pattern%) у sync_state.
+# У Drive файли названі різними мовами/транслітераціями — треба покрити всі варіанти.
+CERTS_BRAND_PATTERNS = {
+    "Vitaran":     ["vitaran", "вітаран", "витаран"],
+    "Ellanse":     ["ellanse", "ellansé", "елансе", "эллансе"],
+    "Neuramis":    ["neuramis", "нейрамис", "нейраміс"],
+    "Petaran":     ["petaran", "петаран"],
+    "Neuronox":    ["neuronox", "нейронокс"],
+    "ESSE":        ["esse", "ессе", "эссе"],
+    "IUSE":        ["iuse"],
+    "EXOXE":       ["exoxe", "ехохе", "экзокс", "ексоксе"],
+    "SkinBooster": ["skinbooster", "skin booster", "скінбустер", "скинбустер"],
+    "Magnox":      ["magnox", "магнокс"],
+}
+
 def build_certs_brand_menu():
     builder = InlineKeyboardBuilder()
     for label, brand in CERTS_BRANDS:
@@ -3412,9 +3431,13 @@ async def certs_by_brand(callback: types.CallbackQuery, state: FSMContext):
     await state.set_state(UserState.mode_certs)
     brand = callback.data.replace("certs_brand_", "")
     await callback.answer()
+    # Беремо список UA/RU/EN-патернів для цього бренду (fallback — сам бренд lowercase)
+    patterns = CERTS_BRAND_PATTERNS.get(brand, [brand.lower()])
+    where_clauses = " OR ".join(["LOWER(file_name) LIKE %s"] * len(patterns))
+    sql_args = tuple(f"%%{p}%%" for p in patterns)
     rows = db.query_dict(
-        "SELECT file_name, file_id FROM sync_state WHERE folder_label = 'certs' AND LOWER(file_name) LIKE %s ORDER BY file_name",
-        (f"%%{brand.lower()}%%",)
+        f"SELECT file_name, file_id FROM sync_state WHERE folder_label = 'certs' AND ({where_clauses}) ORDER BY file_name",
+        sql_args
     )
     if not rows:
         await callback.message.answer(
