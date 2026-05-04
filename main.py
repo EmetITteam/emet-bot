@@ -2740,17 +2740,8 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
         fb_builder.adjust(2)
         await message.answer("Відповідь була корисною?", reply_markup=fb_builder.as_markup())
 
-    # Після відповіді в режимі Coach — показуємо меню Coach знову
-    if mode_key == "coach":
-        builder = InlineKeyboardBuilder()
-        builder.button(text="💬 Новий запит", callback_data="coach_free")
-        builder.button(text="🆘 SOS", callback_data="coach_sos")
-        builder.button(text="🗣 Заперечення", callback_data="coach_objections")
-        builder.button(text="🔗 Комбо", callback_data="coach_combo")
-        builder.button(text="📜 Сертифікати", callback_data="coach_certs")
-        builder.button(text="🏠 Головне меню", callback_data="go_home")
-        builder.adjust(2, 2, 1, 1)
-        await message.answer("Що далі?", reply_markup=builder.as_markup())
+    # «Що далі?» меню після кожної відповіді прибрано — менеджери писали що дратує.
+    # Меню coach (SOS / Заперечення / Комбо / Сертифікати) доступне через "🏠 Головне меню" → "💼 Sales Коуч".
 
 
 # --- 8. LMS ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ---
