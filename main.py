@@ -2969,13 +2969,24 @@ async def handle_email_input(message: types.Message, state: FSMContext):
 
     email_id, role, full_name, already_activated_by = row
 
-    # Перевірка: чи email вже використовується іншим акаунтом
+    # Перевірка: чи email вже використовується іншим АКТИВНИМ акаунтом.
+    # Auto-release: якщо попередній user видалений з users (або is_active=0) —
+    # email вважається вільним, нова прив'язка дозволена без ручного скидання.
     if already_activated_by and already_activated_by != str(message.from_user.id):
-        await message.answer(
-            "⚠️ Ця пошта вже прив'язана до іншого акаунту.\n"
-            "Зверніться до адміністратора."
+        prev_user = db.query(
+            "SELECT is_active FROM users WHERE user_id=%s",
+            (str(already_activated_by),), fetchone=True
         )
-        return
+        prev_is_active = prev_user and prev_user[0] == 1
+        if prev_is_active:
+            await message.answer(
+                "⚠️ Ця пошта вже прив'язана до іншого активного акаунту.\n"
+                "Зверніться до адміністратора."
+            )
+            return
+        # else: попередній юзер не активний → freed email, продовжуємо attach до нового user_id
+        logger.info("Auto-release email %s: prev user %s not active, attaching to %s",
+                    email, already_activated_by, message.from_user.id)
 
     # Авторизація — створюємо/оновлюємо користувача
     user_id = message.from_user.id
