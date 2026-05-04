@@ -2441,8 +2441,8 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
     _context_was_empty = False
     _t_start = time.monotonic()
 
-    # Отправляем placeholder — пользователь сразу видит что бот думает
-    sent_msg = await message.answer("⏳")
+    # Отправляем placeholder — пользователь сразу видит что бот работает
+    sent_msg = await message.answer("🔍 Шукаю в базі знань EMET...")
 
     global _openai_quota_exceeded
     _openai_attempts = 0
@@ -2475,6 +2475,11 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
                     if _synergy_ctx:
                         context = f"ЕФЕКТИ ПРОДУКТІВ ДЛЯ СИНЕРГІЇ:\n{_synergy_ctx}\n\n{context}"
 
+            # Оновлюємо placeholder — менеджер бачить що бот рухається далі
+            try:
+                await sent_msg.edit_text("✍️ Формулюю відповідь...")
+            except Exception:
+                pass
             # Step 1: extract facts
             _llm_context = context
             if _needs_extract and context.strip():
@@ -2556,6 +2561,10 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
     if answer is None:
         ai_used = "Google"
         try:
+            await sent_msg.edit_text("🔄 Перепідключаюсь до резервного джерела...")
+        except Exception:
+            pass
+        try:
             loop = asyncio.get_running_loop()
             _has_comp_g = bool(_classifier_result and _classifier_result.get("competitor")) or bool(_detected_competitor)
             _rag_k_g = RAG_K_BY_INTENT.get(_intent, None) if (_classifier_result and mode_key == "coach") else None
@@ -2632,15 +2641,30 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
         await sent_msg.edit_text("Вибачте, сервери ШІ зараз перевантажені. Спробуйте через хвилину.")
         return
 
-    # Собираем ссылки на источники
+    # Собираем ссылки на источники — ТІЛЬКИ Drive-файли з реальним URL.
+    # Внутрішні джерела (manual cards, LMS, xlsx_structured) не показуємо менеджеру —
+    # вони не кліку́тяться і виглядають як абракадабра ("sales_director_template_2026").
+    def _is_external_url(url: str) -> bool:
+        return bool(url and isinstance(url, str) and url.startswith(("http://", "https://")))
+
     used_links = []
     if sources:
         for doc_id, data in sources.items():
-            if doc_id in answer:
-                used_links.append(f"📄 [{data['name']}]({data['url']})")
+            if doc_id in answer and _is_external_url(data.get("url", "")):
+                # Чистимо ім'я: прибираємо технічні префікси
+                clean_name = data["name"]
+                for prefix in ("[KARTKA] ", "[LMS] ", "[CERT] "):
+                    if clean_name.startswith(prefix):
+                        clean_name = clean_name[len(prefix):]
+                used_links.append(f"📄 [{clean_name}]({data['url']})")
         if not used_links and "нужные документы" in answer.lower():
             for doc_id, data in sources.items():
-                used_links.append(f"📄 [{data['name']}]({data['url']})")
+                if _is_external_url(data.get("url", "")):
+                    clean_name = data["name"]
+                    for prefix in ("[KARTKA] ", "[LMS] ", "[CERT] "):
+                        if clean_name.startswith(prefix):
+                            clean_name = clean_name[len(prefix):]
+                    used_links.append(f"📄 [{clean_name}]({data['url']})")
 
     # Убираем метки REF перед отправкой
     answer = re.sub(r'\[?REF\d+\]?', '', answer).strip()
