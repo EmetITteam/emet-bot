@@ -3592,8 +3592,15 @@ async def handle_feedback(callback: types.CallbackQuery, state: FSMContext):
             await state.update_data(_state_before_feedback=curr_state)
             await state.set_state(UserState.waiting_feedback_comment)
             await callback.message.edit_text(
-                "👎 Дякую. Що було не так? Опишіть одним рядком (або напишіть /skip щоб пропустити).\n\n"
-                "_Ваш коментар допоможе зробити бот точнішим._",
+                "👎 *Що саме не так у цій відповіді?*\n\n"
+                "Напишіть одним реченням про *проблему відповіді* (не нове питання). Наприклад:\n"
+                "• *неповна інформація / пропустив конкурентів*\n"
+                "• *неправильні цифри*\n"
+                "• *не зрозумів моє питання*\n"
+                "• *треба більше деталей*\n"
+                "• *generic, не по суті*\n\n"
+                "Або /skip — просто закрити.\n\n"
+                "⚠️ _Якщо хочете задати НОВЕ питання — натисніть /skip і потім запитайте окремим повідомленням._",
                 parse_mode="Markdown"
             )
     except Exception as e:
