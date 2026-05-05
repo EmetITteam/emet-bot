@@ -1849,6 +1849,10 @@ async def process_text_query(text: str, message: types.Message, state: FSMContex
     _search_query_ready = None  # буде заповнено паралельно якщо пройдемо через else
     # Classifier — ГОЛОВНИЙ роутер. Legacy keywords лишаються тільки для certs + operational.
     _classifier_result = None
+    # Defaults для retrieval — ОБОВ'ЯЗКОВО до if/elif/else, інакше при combo/operational shortcut
+    # ці змінні не визначаться і впадуть з UnboundLocalError при failover на Gemini/Claude.
+    _comparison_target_for_rag: list = []
+    _intent_for_rag: str = ""
 
     if _combo_from_button:
         mode_key = "combo"
